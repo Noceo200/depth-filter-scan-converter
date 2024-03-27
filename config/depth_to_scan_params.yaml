@@ -1,0 +1,35 @@
+depth_to_scan_node:
+  ros__parameters:
+    #node settings
+    rate: 20.0 #hz, better if equal or inferior to depth sensor publishing speed
+
+    #Points cloud filtering settings
+    topic_in: "cam1/depth/points" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
+    ref_frame: "base_link" #reference frame for points 3D position, should be a frame attached to the robot at the floor level and parralel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with height_offset 
+    height_offset: 0.0 #height offset from the floor, distance between the floor and ref_frame.
+    min_height: 0.02 #minimum height of a point to be considered (represent 3D height in ref_frame)
+    max_height: 1.5 #maximum height for points
+    h_fov: 1.570796327 #depth sensor horizontale field of view, will crop the values if smaller than real field of view
+    range_min: 0.0 #m 
+    range_max: 5.0 #m keep the points within this radius
+
+    publish_cloud: true #choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use to check wich points are considered to compute it
+    topic_out_cloud: "cam1/filtered_cloud"
+ 
+    #Scan settings (based on filtered points above)
+    publish_scan: true
+    topic_out_scan: "cam1/scan"
+    out_frame: "cam1_depth_frame" #frame to publish the LaserScan message, put the camera frame or a new one
+    h_angle_increment: 0.017453293 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
+
+    cliff_detect: true #detect and consider holes or cliffs in the floor as obstacles
+    cliff_height: -0.02 #height of points that should be considered as holes and therefore as obstacles
+
+    #advanced output scan settings
+    time_increment: 0.0 #s, let 0.0 if unknown
+    scan_time: 0.0 #s, let 0.0 if unknown
+
+    #debugging
+    debug: true
+    debug_file_path: "/home/jrluser/Desktop/ros_workspace/depth_to_scan_debug.txt"
+    show_ranges: true #Show LaserScan message ranges or not
