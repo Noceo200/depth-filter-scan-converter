@@ -5,6 +5,8 @@ from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
 
+#ros2 launch depth-filter-scan-converter depth_filter_scan_converter.launch.py use_sim_time:=true
+
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
@@ -17,7 +19,7 @@ def generate_launch_description():
 
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
-        default_value=os.path.join(toolbox_dir, 'config', 'depth_to_scan_params.yaml'),
+        default_value=os.path.join(toolbox_dir, 'config', 'depth_filter_scan_converter_params.yaml'),
         description='Full path to the ROS2 parameters file to use')
     
     node=Node(
@@ -26,8 +28,8 @@ def generate_launch_description():
           {'use_sim_time': use_sim_time}
         ],
         package = 'depth-filter-scan-converter',
-        name = 'depth_to_scan_node',
-        executable = 'depth_to_scan_node',
+        name = 'depth_filter_scan_converter_node',
+        executable = 'depth_filter_scan_converter_node',
         output='screen'
     )
 

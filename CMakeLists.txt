@@ -16,8 +16,14 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
-add_executable(depth_to_scan_node src/depth_to_scan.cpp)
-ament_target_dependencies(depth_to_scan_node 
+file(GLOB SOURCES
+    src/*.h
+    src/*.cpp
+)
+
+
+add_executable(depth_filter_scan_converter_node ${SOURCES})
+ament_target_dependencies(depth_filter_scan_converter_node 
   rclcpp sensor_msgs 
   rosgraph_msgs 
   pcl_conversions 
@@ -27,7 +33,7 @@ ament_target_dependencies(depth_to_scan_node
   tf2_geometry_msgs
 )
 
-target_link_libraries(depth_to_scan_node
+target_link_libraries(depth_filter_scan_converter_node
   ${Boost_LIBRARIES}
   ${tf2_LIBRARIES}
   ${tf2_ros_LIBRARIES}
@@ -41,7 +47,7 @@ install(
 
 # Install executable
 install(TARGETS
-  depth_to_scan_node
+  depth_filter_scan_converter_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -9,20 +9,12 @@
 #include <Eigen/Dense>
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
-
-double TimeToDouble(builtin_interfaces::msg::Time& stamp);
-bool consider_val(int current_ind, int start_ind, int end_ind);
-int angle_to_index(double alpha, int resolution);
-int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso);
-double sawtooth(double x, double period);
-geometry_msgs::msg::Vector3 quaternion_to_euler3D(geometry_msgs::msg::Quaternion quat);
-Eigen::MatrixXd get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped transf);
-Eigen::MatrixXd rot_matrix_from_euler(geometry_msgs::msg::Vector3 euler_angles);
+#include "tools.h"
 
 class PointCloudToLaserScanNode : public rclcpp::Node
 {
 public:
-    PointCloudToLaserScanNode() : Node("depth_to_scan_node")
+    PointCloudToLaserScanNode() : Node("depth_filter_scan_converter_node")
     {
         initialize_params();
         refresh_params();
@@ -91,6 +83,9 @@ private:
     void DepthFilterToScan(){
         if(raw_msg != nullptr){
             std::stringstream debug_ss;
+            int t0;
+            int tf;
+            t0 = (this->now()).nanoseconds();
             
             // Copy data
             mutex_points_cloud.lock();
@@ -113,6 +108,7 @@ private:
             }
 
             if(cloud_ready){
+
                 //filter initialisation
                 pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(new pcl::PointCloud<pcl::PointXYZ>);
                 Eigen::MatrixXd Pass_matrix_world_cam;
@@ -132,34 +128,52 @@ private:
                 int nb_cliff_points = 0;
                 int added_as_obstacles = 0;
                 int nb_thrown_points = 0;
+                //constraints initialisation
+                //wanted constraints vector in world frame
+                Eigen::MatrixXd C_h = Eigen::MatrixXd::Identity(4, 1); //height constraint on vector z
+                C_h(0,0) = 0.0;
+                C_h(1,0) = 0.0;
+                C_h(2,0) = 1.0;
+                C_h(3,0) = 1.0;
+                Eigen::MatrixXd C_r = Eigen::MatrixXd::Identity(4, 1); //range constraint on vector x
+                C_r(0,0) = 1.0;
+                C_r(1,0) = 0.0;
+                C_r(2,0) = 0.0;
+                C_r(3,0) = 1.0;
+                //equivalent constraint vector in camera frame
+                Eigen::MatrixXd C_h_f = Pass_matrix_world_cam.inverse()*C_h;
+                Eigen::MatrixXd C_r_f = Pass_matrix_world_cam.inverse()*C_r;
+                //3d versions
+                Eigen::MatrixXd C_h_bar = C_h_f.topRows(3);
+                Eigen::MatrixXd C_r_bar = C_r_f.topRows(3);
 
                 debug_ss << "\nStarting process for "<< nb_points << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
-                int t0;
-                int tf;
-                t0 = (this->now()).nanoseconds();
 
                 // Iterate over each point in the PointCloud and fill filtered_points and laserscan
-                for (int i =0; i<nb_points; i++)
+                for (int i =0; i<nb_points; i+=speed_up)
                 {
                     auto point = raw_points->points[i];
                     // Access the coordinates of the point in its frame, homogenous coordinates
-                    Eigen::MatrixXd P_parent = Eigen::MatrixXd::Identity(4, 1); //position in parent frame
+                    /*Eigen::MatrixXd P_parent = Eigen::MatrixXd::Identity(3, 1); //position in parent frame
                     P_parent(0,0) = point.x;
                     P_parent(1,0) = point.y;
-                    P_parent(2,0) = point.z;
-                    //transform it to have the coordinate in the ref_frame, homogenous coordinates
-                    Eigen::MatrixXd P_world = Pass_matrix_world_cam*P_parent;
+                    P_parent(2,0) = point.z;*/
+                    //transform it to have the coordinate in the ref_frame, homogenous coordinates (cost to much time to compute, so we transform the constraints before)
+                    /*Eigen::MatrixXd P_world = Pass_matrix_world_cam*P_parent;
                     double x = P_world(0,0);
                     double y = P_world(1,0);
-                    double z = P_world(2,0);
+                    double z = P_world(2,0);*/
+
+                    double[3] P_parent = {point.x,point.y,point.z};
+                    double x = point.x;
+                    double y = point.y;
+                    double z = point.z;
 
                     // Process the point here...
-                    double h = height_offset + z; //height in world
+                    double h = height_offset + scalar_projection_fast(P_parent,C_h_bar(0,0),C_h_bar(1,0),C_h_bar(2,0)); //z;//scalar_projection(P_parent, C_h_bar); //height in ref_frame
                     double angle = atan2(y,x); //angle from camera x axis
-                    //debug_ss << "\nDEBUG_SPECIAL: " << "angle = " << angle << std::endl;
-                    //debug_ss << "\nDEBUG_SPECIAL: " << "circle_reso = " << circle_reso << std::endl;
                     int ind_circle = angle_to_index(angle,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values
-                    float dist = sqrt(pow(x,2)+pow(y,2)); //planar from camera center
+                    float dist = scalar_projection_fast(x,y,z,C_r_bar(0,0),C_r_bar(1,0),C_r_bar(2,0)); //sqrt(pow(x,2)+pow(y,2)); //scalar_projection(P_parent, C_r_bar); //planar distance from ref_frame center
 
                     bool in_bounds = (min_height <= h) && (max_height >= h) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
                     bool is_cliff = false;
@@ -168,17 +182,23 @@ private:
                     }*/ //MDP
 
                     if(in_bounds || is_cliff){
-                        int real_ind = remap_scan_index(ind_circle, 0.0, 2*M_PI, circle_reso, -h_fov/2, h_fov/2, scan_reso); //we want the index for a list that represent values from -h_fov/2 values to h_fov/2 values. because the laserscan message is configured like this
-                        //debug_ss << "\nDEBUG_SPECIAL: " << "circle_ind = " << ind_circle << " real_ind = " << real_ind << std::endl;
-                        if(real_ind>0 && real_ind<laser_scan_msg.ranges.size()){
-                            if(dist<laser_scan_msg.ranges[real_ind]){
-                                laser_scan_msg.ranges[real_ind] = dist;
+                        //fill cloud
+                        if(publish_cloud){
+                            filtered_points->push_back(point);
+                        } 
+                        //fill scan
+                        if(publish_scan){
+                            int real_ind = remap_scan_index(ind_circle, 0.0, 2*M_PI, circle_reso, -h_fov/2, h_fov/2, scan_reso); //we want the index for a list that represent values from -h_fov/2 values to h_fov/2 values. because the laserscan message is configured like this
+                            //debug_ss << "\nDEBUG_SPECIAL: " << "circle_ind = " << ind_circle << " real_ind = " << real_ind << std::endl;
+                            if(real_ind>0 && real_ind<laser_scan_msg.ranges.size()){
+                                if(dist<laser_scan_msg.ranges[real_ind]){
+                                    laser_scan_msg.ranges[real_ind] = dist;
+                                }
+                                added_as_obstacles += 1;
+                                laser_scan_msg.intensities[real_ind] = 0.0;
                             }
-                            added_as_obstacles += 1;
-                            laser_scan_msg.intensities[real_ind] = 0.0;
+                            //other cases should never happen as we selected the points that should be in this laser scan already with 'in_bounds', but we add the condition just in case extremities indexes cause problems.
                         }
-                        filtered_points->push_back(point); //for filtered point publishing
-                        //other cases should never happen as we selected the points that should be in this laser scan already with 'in_bounds', but we add the condition just in case extremities indexes cause problems.
                     }
 
                     //debug
@@ -210,18 +230,22 @@ private:
                 }
 
                 //Publish filtered cloud points
-                filtered_points_publisher_->publish(filtered_msg);
+                if(publish_cloud){
+                    filtered_points_publisher_->publish(filtered_msg);
+                }
 
-                // Publish the LaserScan message
-                laser_scan_publisher_->publish(laser_scan_msg);
-
-                //debug data
                 int non_zero_vals = 0;
-                int total_vals = laser_scan_msg.ranges.size();
-                if(debug){
-                    for(int i=0; i < total_vals; i++){
-                        if(laser_scan_msg.ranges[i] < INFINITY){
-                            non_zero_vals ++;
+                int total_vals = 0;
+                if(publish_scan){
+                    // Publish the LaserScan message
+                    laser_scan_publisher_->publish(laser_scan_msg);
+                    //debug data
+                    if(debug){
+                        total_vals = laser_scan_msg.ranges.size();
+                        for(int i=0; i < total_vals; i++){
+                            if(laser_scan_msg.ranges[i] < INFINITY){
+                                non_zero_vals ++;
+                            }
                         }
                     }
                 }
@@ -239,20 +263,24 @@ private:
                         << "\n   Total Obstacles: " << added_as_obstacles
                         << "\n   Ignored points: " << nb_thrown_points;
 
-                debug_ss << "    |\n    |\n    V"
-                        << "\nFiltered points cloud published" << " (node time: " << (this->now()).nanoseconds() << "ns)" 
-                        << "\n  Frame: " <<  filtered_msg.header.frame_id
-                        << "\n  Timestamp: " <<  std::to_string(TimeToDouble(filtered_msg.header.stamp))
-                        << "\n  Number of points: " << filtered_points->points.size()
-                        << std::endl;
+                if(publish_cloud){
+                    debug_ss << "    |\n    |\n    V"
+                            << "\nFiltered points cloud published" << " (node time: " << (this->now()).nanoseconds() << "ns)" 
+                            << "\n  Frame: " <<  filtered_msg.header.frame_id
+                            << "\n  Timestamp: " <<  std::to_string(TimeToDouble(filtered_msg.header.stamp))
+                            << "\n  Number of points: " << filtered_points->points.size()
+                            << std::endl;
+                }
 
-                debug_ss << "    |\n    |\n    V"
-                        << "\nLaserScan published" << " (node time: " << (this->now()).nanoseconds() << "ns)" 
-                        << "\n  Frame: " <<  laser_scan_msg.header.frame_id
-                        << "\n  Timestamp: " <<  std::to_string(TimeToDouble(laser_scan_msg.header.stamp))
-                        << "\n  Number of rays: " << total_vals
-                        << "\n  Number of hit: " << non_zero_vals
-                        << std::endl;
+                if(publish_scan){
+                    debug_ss << "    |\n    |\n    V"
+                            << "\nLaserScan published" << " (node time: " << (this->now()).nanoseconds() << "ns)" 
+                            << "\n  Frame: " <<  laser_scan_msg.header.frame_id
+                            << "\n  Timestamp: " <<  std::to_string(TimeToDouble(laser_scan_msg.header.stamp))
+                            << "\n  Number of rays: " << total_vals
+                            << "\n  Number of hit: " << non_zero_vals
+                            << std::endl;
+                }
 
                 tf = (this->now()).nanoseconds();
                 double delay_ms = (tf-t0)/1000000; //delay ms
@@ -261,7 +289,7 @@ private:
                          << std::endl;
 
 
-                if(debug && show_ranges){
+                if(debug && show_ranges && publish_scan){
                     debug_ss << "Ranges: ";
                     for(int i=0; i < total_vals; i++){
                         debug_ss << laser_scan_msg.ranges[i] << " ";
@@ -348,6 +376,7 @@ private:
         this->declare_parameter("h_fov", 1.570796327);
         this->declare_parameter("range_min", 0.0);
         this->declare_parameter("range_max", 5.0);
+        this->declare_parameter("speed_up", 1);
         this->declare_parameter("publish_cloud", true);
         this->declare_parameter("topic_out_cloud", "cam1/filtered_cloud");
         this->declare_parameter("publish_scan", true);
@@ -359,7 +388,7 @@ private:
         this->declare_parameter("time_increment", 0.0);
         this->declare_parameter("scan_time", 0.0);
         this->declare_parameter("debug", true);
-        this->declare_parameter("debug_file_path", "/home/jrluser/Desktop/ros_workspace/depth_to_scan_debug.txt");
+        this->declare_parameter("debug_file_path", "/home/jrluser/Desktop/ros_workspace/depth_filter_scan_converter_debug.txt");
         this->declare_parameter("show_ranges", true);
     }
 
@@ -373,6 +402,7 @@ private:
         this->get_parameter("h_fov", h_fov);
         this->get_parameter("range_min", range_min);
         this->get_parameter("range_max", range_max);
+        this->get_parameter("speed_up", speed_up);
         this->get_parameter("publish_cloud", publish_cloud);
         this->get_parameter("topic_out_cloud", topic_out_cloud);
         this->get_parameter("publish_scan", publish_scan);
@@ -390,7 +420,7 @@ private:
 
     void debug_params(){
         std::stringstream debug_ss;
-        debug_ss <<"depth_to_scan_node started !";
+        debug_ss <<"depth_filter_scan_converter_node started !";
         debug_ss << "\nPARAMETERS:"
                 << "\nrate: " << rate
                 << "\ntopic_in: " << topic_in
@@ -401,6 +431,7 @@ private:
                 << "\nh_fov: " << h_fov
                 << "\nrange_min: " << range_min
                 << "\nrange_max: " << range_max
+                << "\nspeed_up: " << speed_up
                 << "\npublish_cloud: " << publish_cloud
                 << "\ntopic_out_cloud: " << topic_out_cloud
                 << "\npublish_scan: " << publish_scan
@@ -461,6 +492,7 @@ private:
     double h_fov;
     double range_min;
     double range_max;
+    int speed_up;
     bool publish_cloud;
     std::string topic_out_cloud;
     //Scan settings
@@ -498,115 +530,3 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-Eigen::MatrixXd get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped transf){
-    geometry_msgs::msg::Vector3 translation_ = transf.transform.translation;  //translation vector from new_frame to frame_sensor
-    geometry_msgs::msg::Vector3 rotation_ = quaternion_to_euler3D(transf.transform.rotation);
-    //Translation in homogeneous coordinates
-    Eigen::MatrixXd T = Eigen::MatrixXd::Identity(4, 4);
-    T(0,3) = translation_.x;
-    T(1,3) = translation_.y;
-    T(2,3) = translation_.z;
-    //3D rotation matrix
-    Eigen::MatrixXd R_temp = rot_matrix_from_euler(rotation_);
-    //3D rotation in homogeneous coordinates
-    Eigen::MatrixXd R = Eigen::MatrixXd::Identity(4, 4);
-    for(int i = 0; i<3; i++){
-        for(int y = 0; y<3; y++){
-            R(i,y) = R_temp(i,y);
-        }
-    }
-    //final homogeneous transformation, M1_2 = pass matrix, displacement from new_frame to init_frame
-    Eigen::MatrixXd M1_2(4, 4);
-    M1_2 = T*R;
-    return M1_2;
-}
-
-Eigen::MatrixXd rot_matrix_from_euler(geometry_msgs::msg::Vector3 euler_angles){
-    Eigen::MatrixXd Rx = Eigen::MatrixXd::Identity(3, 3);
-    Rx(1,1) = cos(euler_angles.x);
-    Rx(1,2) = -sin(euler_angles.x);
-    Rx(2,1) = sin(euler_angles.x);
-    Rx(2,2) = cos(euler_angles.x);
-    Eigen::MatrixXd Ry = Eigen::MatrixXd::Identity(3, 3);
-    Ry(0,0) = cos(euler_angles.y);
-    Ry(0,2) = sin(euler_angles.y);
-    Ry(2,0) = -sin(euler_angles.y);
-    Ry(2,2) = cos(euler_angles.y);
-    Eigen::MatrixXd Rz = Eigen::MatrixXd::Identity(3, 3);
-    Rz(0,0) = cos(euler_angles.z);
-    Rz(0,1) = -sin(euler_angles.z);
-    Rz(1,0) = sin(euler_angles.z);
-    Rz(1,1) = cos(euler_angles.z);
-    return Rx*Ry*Rz;
-}
-
-geometry_msgs::msg::Vector3 quaternion_to_euler3D(geometry_msgs::msg::Quaternion quat){
-    // Convert geometry_msgs::msg::Quaternion to Eigen::Quaterniond
-    Eigen::Quaterniond eigen_quaternion(
-        quat.w,
-        quat.x,
-        quat.y,
-        quat.z
-    );
-    // Convert quaternion to Euler angles
-    Eigen::Vector3d euler_angles = eigen_quaternion.toRotationMatrix().eulerAngles(0, 1, 2); 
-    geometry_msgs::msg::Vector3 rot_vect;
-    rot_vect.x = euler_angles(0);
-    rot_vect.y = euler_angles(1);
-    rot_vect.z = euler_angles(2);
-    //RCLCPP_INFO(this->get_logger(), "ROT Quat: x='%.2f', y='%.2f', z='%.2f', w='%.2f'", quat.x,quat.y,quat.z,quat.w);
-    //RCLCPP_INFO(this->get_logger(), "ROT Euler: x='%.2f', y='%.2f', z='%.2f'", rot_vect.x,rot_vect.y,rot_vect.z);
-    return rot_vect;
-}
-
-double TimeToDouble(builtin_interfaces::msg::Time& stamp){
-    return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
-}
-
-bool consider_val(int current_ind, int start_ind, int end_ind){
-    // return true if current_ind is between start_ind and end_ind according to a circle reference.
-    if(start_ind>end_ind){ //if interval pass throught the origin of the circle, we test considering the split into 2 interval
-        return (current_ind>=start_ind || current_ind<=end_ind);
-    }
-    else{ // if values are equal, or classical ,we test as classic interval
-        return (current_ind>=start_ind && current_ind<=end_ind);
-    }
-}
-
-int angle_to_index(double alpha, int resolution){
-    //return index of angle alpha, in a table with 'resolution' values placed from 0 to 360 degree.
-    // Normalize the angle to the range [0, 2*M_PI)
-    alpha = std::fmod(alpha, 2 * M_PI);
-    if (alpha < 0) {
-        alpha += 2 * M_PI;
-    }
-    // Calculate the index
-    return static_cast<int>(round((alpha * resolution) / 2*M_PI));
-}
-
-int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso){
-    int new_ind;
-    /*
-    return the index in a new scan list.
-    */
-
-   //offset gestion
-    double angle_offset = sawtooth(new_angle_start-prev_angle_start,2*M_PI);
-    int ind_offset = -std::copysign(1.0,angle_offset)*angle_to_index(std::abs(angle_offset),prev_reso);
-    new_ind = static_cast<int>(round(fmod(prev_ind + ind_offset,prev_reso)));
-    if(new_ind<0){
-        new_ind += prev_reso;
-    }
-    //different reso gestion 
-    double prev_elong = prev_angle_end - prev_angle_start;  
-    double new_elong = new_angle_end - new_angle_start;
-    double prev_angle_incr = prev_elong/prev_reso;
-    double new_angle_incr = new_elong/new_reso;
-    new_ind = static_cast<int>(round((prev_angle_incr*new_ind)/new_angle_incr));
-    
-    return new_ind;
-}
-
-double sawtooth(double x, double period) {
-    return 2.0 * (x / period - floor(x / period)) - 1.0;
-}
