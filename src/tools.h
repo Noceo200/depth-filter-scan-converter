@@ -19,7 +19,7 @@ double TimeToDouble(builtin_interfaces::msg::Time& stamp);
 bool consider_val(int current_ind, int start_ind, int end_ind);
 int angle_to_index(double alpha, int resolution);
 int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso);
-double sawtooth(double x, double period);
+double sawtooth(double x);
 geometry_msgs::msg::Vector3 quaternion_to_euler3D(geometry_msgs::msg::Quaternion quat);
 std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped transf);
 void get_4Dmatrix_from_transform_fast(double (&M)[4][4],geometry_msgs::msg::TransformStamped transf);

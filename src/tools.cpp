@@ -230,11 +230,14 @@ int angle_to_index(double alpha, int resolution){
     //return index of angle alpha, in a table with 'resolution' values placed from 0 to 360 degree.
     // Normalize the angle to the range [0, 2*M_PI)
     alpha = std::fmod(alpha, 2 * M_PI);
+    //debug_ss << "\nAngle_to_index: "<< " mod: " << alpha;
     if (alpha < 0) {
         alpha += 2 * M_PI;
     }
     // Calculate the index
-    return static_cast<int>(round((alpha * resolution) / 2*M_PI));
+    int ind = static_cast<int>(round((alpha * resolution)/(2*M_PI)));
+    //debug_ss <<  " alpha*reso: " << alpha*resolution << " ind: " << ind;
+    return ind;
 }
 
 int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso){
@@ -244,7 +247,7 @@ int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_en
     */
 
    //offset gestion
-    double angle_offset = sawtooth(new_angle_start-prev_angle_start,2*M_PI);
+    double angle_offset = sawtooth(new_angle_start-prev_angle_start);
     int ind_offset = -std::copysign(1.0,angle_offset)*angle_to_index(std::abs(angle_offset),prev_reso);
     new_ind = static_cast<int>(round(fmod(prev_ind + ind_offset,prev_reso)));
     if(new_ind<0){
@@ -260,6 +263,6 @@ int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_en
     return new_ind;
 }
 
-double sawtooth(double x, double period) {
-    return 2.0 * (x / period - floor(x / period)) - 1.0;
+double sawtooth(double x) {
+    return std::fmod(x+M_PI,2*M_PI)-M_PI;
 }
