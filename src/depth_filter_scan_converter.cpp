@@ -102,17 +102,19 @@ private:
             int nb_points = raw_points->points.size();
             bool cloud_ready = false;
             bool scan_ready = false;
-            cloud_ready = update_transform(transf_world_cam,ref_frame,msg->header.frame_id); //needed even if we don't publish the clouds
+            cloud_ready = update_transform(transf_cam_world,msg->header.frame_id,ref_frame); //needed even if we don't publish the clouds
             if(publish_scan){
                 scan_ready = update_transform(transf_laser_cam,out_frame,msg->header.frame_id);
             }
 
             if(cloud_ready){
 
+                //version with multidimensionnal array in trash below, but slower for initialisaton
+
                 //filter initialisation
                 pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(new pcl::PointCloud<pcl::PointXYZ>);
-                Eigen::MatrixXd Pass_matrix_world_cam;
-                Pass_matrix_world_cam = get_4Dmatrix_from_transform(transf_world_cam); //needed anyway by both feature
+                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_cam_world = get_4Dmatrix_from_transform(transf_cam_world); //needed anyway by both feature, here we just get the rotation matrix
+                double height_cam_offset = std::get<0>(Pass_matrixes_cam_world)(2,3);
 
                 //scan initialisation
                 int scan_reso = static_cast<int>(round(h_fov/h_angle_increment));
@@ -120,14 +122,15 @@ private:
                 int start_index = angle_to_index(-h_fov/2, circle_reso); //start index acording to fov on a 360 degree scan with circle_reso values, we take 360 so that we can throw points that are somewhere else on the circle
                 int end_index = angle_to_index(h_fov/2, circle_reso);
                 sensor_msgs::msg::LaserScan laser_scan_msg = new_clean_scan(); // To convert PointCloud2 to LaserScan
-                Eigen::MatrixXd Pass_matrix_laser_cam;
-                if(scan_ready){Pass_matrix_laser_cam = get_4Dmatrix_from_transform(transf_laser_cam);}
+                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_laser_cam;
+                if(scan_ready){Pass_matrixes_laser_cam = get_4Dmatrix_from_transform(transf_laser_cam);}
 
                 //debug initialisation
                 int nb_inbound_points = 0;
                 int nb_cliff_points = 0;
                 int added_as_obstacles = 0;
                 int nb_thrown_points = 0;
+
                 //constraints initialisation
                 //wanted constraints vector in world frame
                 Eigen::MatrixXd C_h = Eigen::MatrixXd::Identity(4, 1); //height constraint on vector z
@@ -140,12 +143,14 @@ private:
                 C_r(1,0) = 0.0;
                 C_r(2,0) = 0.0;
                 C_r(3,0) = 1.0;
-                //equivalent constraint vector in camera frame
-                Eigen::MatrixXd C_h_f = Pass_matrix_world_cam.inverse()*C_h;
-                Eigen::MatrixXd C_r_f = Pass_matrix_world_cam.inverse()*C_r;
-                //3d versions
-                Eigen::MatrixXd C_h_bar = C_h_f.topRows(3);
-                Eigen::MatrixXd C_r_bar = C_r_f.topRows(3);
+                //equivalent constraint vector in camera frame, we apply just the rotation, we just need directions
+                Eigen::MatrixXd C_h_f = std::get<1>(Pass_matrixes_cam_world)*C_h;
+                Eigen::MatrixXd C_r_f = std::get<1>(Pass_matrixes_cam_world)*C_r;
+                //3d versions, using multi dimensionnal arrays are faster inside the coming loop
+                double C_h_bar[3] = {C_h_f(0,0),C_h_f(1,0),C_h_f(2,0)};
+                double C_r_bar[3] = {C_r_f(0,0),C_r_f(1,0),C_r_f(2,0)};
+                //Eigen::MatrixXd C_h_bar = C_h_f.topRows(3);
+                //Eigen::MatrixXd C_r_bar = C_r_f.topRows(3);
 
                 debug_ss << "\nStarting process for "<< nb_points << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
 
@@ -153,7 +158,9 @@ private:
                 for (int i =0; i<nb_points; i+=speed_up)
                 {
                     auto point = raw_points->points[i];
+
                     // Access the coordinates of the point in its frame, homogenous coordinates
+                    double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
                     /*Eigen::MatrixXd P_parent = Eigen::MatrixXd::Identity(3, 1); //position in parent frame
                     P_parent(0,0) = point.x;
                     P_parent(1,0) = point.y;
@@ -164,16 +171,11 @@ private:
                     double y = P_world(1,0);
                     double z = P_world(2,0);*/
 
-                    double[3] P_parent = {point.x,point.y,point.z};
-                    double x = point.x;
-                    double y = point.y;
-                    double z = point.z;
-
                     // Process the point here...
-                    double h = height_offset + scalar_projection_fast(P_parent,C_h_bar(0,0),C_h_bar(1,0),C_h_bar(2,0)); //z;//scalar_projection(P_parent, C_h_bar); //height in ref_frame
-                    double angle = atan2(y,x); //angle from camera x axis
+                    double h = height_offset + scalar_projection_fast(P_parent,C_h_bar) - height_cam_offset; //Height in world = height offset + height in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
+                    double angle = atan2(P_parent[1],P_parent[0]); //angle from camera x axis
                     int ind_circle = angle_to_index(angle,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values
-                    float dist = scalar_projection_fast(x,y,z,C_r_bar(0,0),C_r_bar(1,0),C_r_bar(2,0)); //sqrt(pow(x,2)+pow(y,2)); //scalar_projection(P_parent, C_r_bar); //planar distance from ref_frame center
+                    float dist = scalar_projection_fast(P_parent,C_r_bar); //planar distance from ref_frame center
 
                     bool in_bounds = (min_height <= h) && (max_height >= h) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
                     bool is_cliff = false;
@@ -472,7 +474,7 @@ private:
     
     //data
     sensor_msgs::msg::PointCloud2::SharedPtr raw_msg = nullptr;
-    geometry_msgs::msg::TransformStamped transf_world_cam;
+    geometry_msgs::msg::TransformStamped transf_cam_world;
     geometry_msgs::msg::TransformStamped transf_laser_cam;
     //subscribers/publishers
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscriber_;
@@ -530,3 +532,46 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+//trash
+
+                /*//filter initialisation
+                pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(new pcl::PointCloud<pcl::PointXYZ>);
+                double Pass_matrix_cam_world[4][4];
+                get_4Dmatrix_from_transform_fast(Pass_matrix_cam_world,transf_cam_world); //needed anyway by both feature
+
+                //scan initialisation
+                int scan_reso = static_cast<int>(round(h_fov/h_angle_increment));
+                int circle_reso = static_cast<int>(round(scan_reso*(2*M_PI/h_fov)));
+                int start_index = angle_to_index(-h_fov/2, circle_reso); //start index acording to fov on a 360 degree scan with circle_reso values, we take 360 so that we can throw points that are somewhere else on the circle
+                int end_index = angle_to_index(h_fov/2, circle_reso);
+                sensor_msgs::msg::LaserScan laser_scan_msg = new_clean_scan(); // To convert PointCloud2 to LaserScan
+                double Pass_matrix_laser_cam[4][4];
+                if(scan_ready){get_4Dmatrix_from_transform_fast(Pass_matrix_laser_cam,transf_laser_cam);}
+
+                //debug initialisation
+                int nb_inbound_points = 0;
+                int nb_cliff_points = 0;
+                int added_as_obstacles = 0;
+                int nb_thrown_points = 0;
+                //constraints initialisation
+                //wanted constraints vector in world frame
+                double C_h[4][1] = {
+                    {0.0},
+                    {0.0},
+                    {1.0},
+                    {1.0}
+                    }; //height constraint on vector z
+                double C_r[4][1] = {
+                    {1.0},
+                    {0.0},
+                    {0.0},
+                    {1.0}
+                    };  //range constraint on vector x
+                //equivalent constraint vector in camera frame
+                double C_h_f[4][1];
+                MatProd_fast4_Vect(C_h_f,Pass_matrix_cam_world,C_h);
+                double C_r_f[4][1];
+                MatProd_fast4_Vect(C_r_f,Pass_matrix_cam_world,C_r);
+                //3d versions
+                double C_h_bar[3] = {C_h_f[0][0],C_h_f[1][0],C_h_f[2][0]};
+                double C_r_bar[3] = {C_r_f[0][0],C_r_f[1][0],C_r_f[2][0]};*/

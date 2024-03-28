@@ -11,7 +11,66 @@
 #include "tf2_ros/buffer.h"
 #include "tools.h"
 
-double scalar_projection_fast(double[3] &a, double[3] &b) {
+void MatProd_fast4_4(double (&M)[4][4],double (&A)[4][4],double (&B)[4][4]){
+    for(int i =0; i< 4; i++){
+        for(int j =0; j< 4; j++){
+            M[i][j] = 0.0;
+            for(int s =0; s< 4; s++){
+                M[i][j] += A[i][s]*B[s][j];
+            }
+        }
+    }
+}
+
+void MatProd_fast3_3(double (&M)[3][3],double (&A)[3][3],double (&B)[3][3]){
+    for(int i =0; i< 3; i++){
+        for(int j =0; j< 3; j++){
+            M[i][j] = 0.0;
+            for(int s =0; s< 3; s++){
+                M[i][j] += A[i][s]*B[s][j];
+            }
+        }
+    }
+}
+
+void MatProd_fast4_Vect(double (&M)[4][1],double (&A)[4][4],double (&B)[4][1]){
+    for(int i =0; i< 4; i++){
+        for(int j =0; j< 1; j++){
+            M[i][j] = 0.0;
+            for(int s =0; s< 4; s++){
+                M[i][j] += A[i][s]*B[s][j];
+            }
+        }
+    }
+}
+
+void to_identity3_3(double (&mat)[3][3]){
+    for(int i =0; i< 3; i++){
+        for(int j =0; j< 3; j++){
+            if(j==i){
+                mat[i][j]=1.0;
+            }
+            else{
+                mat[i][j]=0.0;
+            }
+        }
+    }
+}
+
+void to_identity4_4(double (&mat)[4][4]){
+    for(int i =0; i< 4; i++){
+        for(int j =0; j< 4; j++){
+            if(j==i){
+                mat[i][j]=1.0;
+            }
+            else{
+                mat[i][j]=0.0;
+            }
+        }
+    }
+}
+
+double scalar_projection_fast(double (&a)[3], double (&b)[3]) {
     //projection of 'a' into 'b': https://en.wikipedia.org/wiki/Vector_projection
     // Calculate dot product of a and b
     double dot_product = a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
@@ -39,7 +98,7 @@ double scalar_projection(const Eigen::VectorXd& a, const Eigen::VectorXd& b) {
     return projection;
 }
 
-Eigen::MatrixXd get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped transf){
+std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped transf){
     geometry_msgs::msg::Vector3 translation_ = transf.transform.translation;  //translation vector from new_frame to frame_sensor
     geometry_msgs::msg::Vector3 rotation_ = quaternion_to_euler3D(transf.transform.rotation);
     //Translation in homogeneous coordinates
@@ -57,9 +116,38 @@ Eigen::MatrixXd get_4Dmatrix_from_transform(geometry_msgs::msg::TransformStamped
         }
     }
     //final homogeneous transformation, M1_2 = pass matrix, displacement from new_frame to init_frame
+
     Eigen::MatrixXd M1_2(4, 4);
     M1_2 = T*R;
-    return M1_2;
+
+    return std::make_tuple(T, R, M1_2);
+
+}
+
+void get_4Dmatrix_from_transform_fast(double (&M)[4][4],geometry_msgs::msg::TransformStamped transf){
+    geometry_msgs::msg::Vector3 translation_ = transf.transform.translation;  //translation vector from new_frame to frame_sensor
+    geometry_msgs::msg::Vector3 rotation_ = quaternion_to_euler3D(transf.transform.rotation);
+    //Translation in homogeneous coordinates
+    double T[4][4] = {
+                    {1.0,0.0,0.0,translation_.x},
+                    {0.0,1.0,0.0,translation_.y},
+                    {0.0,0.0,1.0,translation_.z},
+                    {0.0,0.0,0.0,1.0}
+                    };
+    //3D rotation matrix
+    double R_temp[3][3];
+    rot_matrix_from_euler_fast(R_temp,rotation_);
+    //3D rotation in homogeneous coordinates
+    double R[4][4];
+    to_identity4_4(R);
+    for(int i = 0; i<3; i++){
+        for(int y = 0; y<3; y++){
+            R[i][y] = R_temp[i][y];
+        }
+    }
+    //final homogeneous transformation, M1_2 = pass matrix, displacement from new_frame to init_frame
+    double M1_2[4][4];
+    MatProd_fast4_4(M1_2,T,R);
 }
 
 Eigen::MatrixXd rot_matrix_from_euler(geometry_msgs::msg::Vector3 euler_angles){
@@ -79,6 +167,30 @@ Eigen::MatrixXd rot_matrix_from_euler(geometry_msgs::msg::Vector3 euler_angles){
     Rz(1,0) = sin(euler_angles.z);
     Rz(1,1) = cos(euler_angles.z);
     return Rx*Ry*Rz;
+}
+
+void rot_matrix_from_euler_fast(double (&R)[3][3], geometry_msgs::msg::Vector3 euler_angles){
+    double Rx[3][3];
+    to_identity3_3(Rx);
+    Rx[1][1] = cos(euler_angles.x);
+    Rx[1][2] = -sin(euler_angles.x);
+    Rx[2][1] = sin(euler_angles.x);
+    Rx[2][2] = cos(euler_angles.x);
+    double Ry[3][3];
+    to_identity3_3(Ry);
+    Ry[0][0] = cos(euler_angles.y);
+    Ry[0][2] = sin(euler_angles.y);
+    Ry[2][0] = -sin(euler_angles.y);
+    Ry[2][2] = cos(euler_angles.y);
+    double Rz[3][3];
+    to_identity3_3(Rz);
+    Rz[0][0] = cos(euler_angles.z);
+    Rz[0][1] = -sin(euler_angles.z);
+    Rz[1][0] = sin(euler_angles.z);
+    Rz[1][1] = cos(euler_angles.z);
+    double R_temp[3][3];
+    MatProd_fast3_3(R_temp,Ry,Rz);
+    MatProd_fast3_3(R,Rx,R_temp);
 }
 
 geometry_msgs::msg::Vector3 quaternion_to_euler3D(geometry_msgs::msg::Quaternion quat){
