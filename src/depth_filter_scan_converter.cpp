@@ -81,8 +81,9 @@ private:
     }
 
     void DepthFilterToScan(){
-        if(raw_msg != nullptr){
-            std::stringstream debug_ss;
+        std::stringstream debug_ss;
+
+        if(raw_msg != nullptr && TimeToDouble(raw_msg->header.stamp) != last_timestamp){
             int t0;
             int tf;
             t0 = (this->now()).nanoseconds();
@@ -91,6 +92,7 @@ private:
             mutex_points_cloud.lock();
             sensor_msgs::msg::PointCloud2::SharedPtr msg(new sensor_msgs::msg::PointCloud2(*raw_msg));
             mutex_points_cloud.unlock();
+            last_timestamp = TimeToDouble(msg->header.stamp);
 
             //convert PointCloud2 to points pcl object
             pcl::PCLPointCloud2 pcl_pc2;
@@ -170,6 +172,7 @@ private:
                 double C_a_bar[3] = {C_a_f(0,0),C_a_f(1,0),C_a_f(2,0)};
                 //Eigen::MatrixXd C_h_bar = C_h_f.topRows(3);
                 //Eigen::MatrixXd C_r_bar = C_r_f.topRows(3);
+                //Eigen::MatrixXd C_a_bar = C_a_f.topRows(3);
 
                 debug_ss << "\nStarting process for "<< int(nb_points/(speed_up_h*speed_up_v)) << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
                 //debug_ss << "\nDEBUG_PERSO: nb_column: " << nb_column << "nb_line: " << nb_line << std::endl;
@@ -218,7 +221,7 @@ private:
                             if(publish_scan){
                                 int real_ind = remap_scan_index(ind_circle, 0.0, 2*M_PI, circle_reso, -h_fov/2, h_fov/2, scan_reso); //we want the index for a list that represent values from -h_fov/2 values to h_fov/2 values. because the laserscan message is configured like this
                                 //debug_ss << "\nDEBUG_SPECIAL: " << "angle: "<< angle*180/M_PI << " circle_ind = " << ind_circle << " real_ind = " << real_ind << std::endl;
-                                if(real_ind>0 && real_ind<laser_scan_msg.ranges.size()){
+                                if(real_ind>=0 && real_ind<laser_scan_msg.ranges.size()){
                                     if(dist<laser_scan_msg.ranges[real_ind]){
                                         laser_scan_msg.ranges[real_ind] = dist;
                                     }
@@ -285,7 +288,7 @@ private:
                         << "\n  - Angle (horizontal fov): [" << -h_fov/2 << "," << h_fov/2 << "] rad"
                         << "\n  - Height: [" << min_height << "," << max_height << "] m"
                         << "\n  - Or hole with height (if cliff_detect = true): < " << -cliff_height << " m"
-                        << "\n  - Planar Distance: " << range_min << "," << range_max << "] m"
+                        << "\n  - Planar Distance: [" << range_min << "," << range_max << "] m"
                         << "\nPoints results: "
                         << "\n   Points in bounds: " << nb_inbound_points
                         << "\n   Holes: " << nb_cliff_points
@@ -326,18 +329,22 @@ private:
                     debug_ss << std::endl;
                 }
 
-                if(debug){
-                    std::string debug_msg = debug_ss.str();
-                    write_debug(debug_file_path, debug_msg);
-                }
             }
+        }
+        else{
+            debug_ss << "\nWaiting to receive points cloud on topic '" << topic_in << "'..." << std::endl;
+        }
+
+        if(debug){
+            std::string debug_msg = debug_ss.str();
+            write_debug(debug_file_path, debug_msg);
         }
     }
 
     sensor_msgs::msg::LaserScan new_clean_scan() {
         sensor_msgs::msg::LaserScan clean_scan;
         clean_scan.header.frame_id=out_frame;
-        clean_scan.angle_min=-h_fov/2; 
+        clean_scan.angle_min=-h_fov/2;
         clean_scan.angle_max=h_fov/2; 
         clean_scan.angle_increment=h_angle_increment;
         clean_scan.range_min=range_min; 
@@ -507,6 +514,7 @@ private:
     geometry_msgs::msg::TransformStamped transf_cam_world;
     geometry_msgs::msg::TransformStamped transf_world_cam;
     geometry_msgs::msg::TransformStamped transf_laser_cam;
+    double last_timestamp;
     //subscribers/publishers
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscriber_;
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr laser_scan_publisher_;

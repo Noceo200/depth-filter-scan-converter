@@ -4,7 +4,7 @@ depth_filter_scan_converter_node:
     rate: 20.0 #hz, better if equal or inferior to depth sensor publishing speed
 
     #Points cloud filtering settings
-    topic_in: "cam1/depth/points" #"/cam1/zed_node/point_cloud/cloud_registered" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
+    topic_in: "/cam1/zed_node/point_cloud/cloud_registered" #cam1/depth/points" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
     ref_frame: "base_link" #reference frame for points 3D position, should be a frame attached to the robot at the floor level and parralel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with height_offset 
     height_offset: 0.147 #height offset from the floor, distance between the floor and ref_frame. (following z axis in ref_frame, usually >0 as ref_frame above the floor)
     min_height: 0.02 #minimum height of a point to be considered (represent height following z axis ref_frame)
