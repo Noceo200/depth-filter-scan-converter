@@ -46,7 +46,7 @@ public:
 
         // Initialize publisher for filtered point cloud
         if(publish_cloud){
-            filtered_points_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("filtered_point_cloud", default_qos);
+            filtered_points_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(topic_out_cloud, default_qos);
         }
 
         // Start loop
@@ -100,6 +100,12 @@ private:
 
             //common initialisation
             int nb_points = raw_points->points.size();
+            int nb_column = raw_msg->width;
+            int nb_line = raw_msg->height;
+            if(nb_line==1){ //if we have uordered list of points, we consider it as a square cloud
+                nb_column = static_cast<int>(sqrt(nb_column));
+                nb_line = nb_column;
+            }
             bool cloud_ready = false;
             bool cloud_ready2 = false;
             bool scan_ready = false;
@@ -165,68 +171,74 @@ private:
                 //Eigen::MatrixXd C_h_bar = C_h_f.topRows(3);
                 //Eigen::MatrixXd C_r_bar = C_r_f.topRows(3);
 
-                debug_ss << "\nStarting process for "<< int(nb_points/speed_up) << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
+                debug_ss << "\nStarting process for "<< int(nb_points/(speed_up_h*speed_up_v)) << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
+                //debug_ss << "\nDEBUG_PERSO: nb_column: " << nb_column << "nb_line: " << nb_line << std::endl;
 
                 // Iterate over each point in the PointCloud and fill filtered_points and laserscan
-                for (int i =0; i<nb_points; i+=speed_up)
+                for (int il =0; il<nb_line; il+=speed_up_h)
                 {
-                    auto point = raw_points->points[i];
+                    for (int ic =0; ic<nb_column; ic+=speed_up_v){
+                        int i = il*nb_column+ic; //position of point in the list
+                        //debug_ss << "\nDEBUG_PERSO: Indexes: " << i;
 
-                    // Access the coordinates of the point in its frame, homogenous coordinates
-                    double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
-                    /*Eigen::MatrixXd P_parent = Eigen::MatrixXd::Identity(3, 1); //position in parent frame
-                    P_parent(0,0) = point.x;
-                    P_parent(1,0) = point.y;
-                    P_parent(2,0) = point.z;*/
-                    //transform it to have the coordinate in the ref_frame, homogenous coordinates (cost to much time to compute, so we transform the constraints before)
-                    /*Eigen::MatrixXd P_world = Pass_matrix_world_cam*P_parent;
-                    double x = P_world(0,0);
-                    double y = P_world(1,0);
-                    double z = P_world(2,0);*/
+                        auto point = raw_points->points[i];
 
-                    // Process the point here...
-                    double h_world = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
-                    double x_ref = scalar_projection_fast(P_parent,C_r_bar);
-                    double y_ref = scalar_projection_fast(P_parent,C_a_bar);
-                    double angle = atan2(y_ref,x_ref); //angle from ref_frame x axis
-                    int ind_circle = angle_to_index(angle,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values
-                    float dist = sqrt(pow(x_ref+x_cam_offset,2)+pow(y_ref+y_cam_offset,2)); //planar distance from robot center
+                        // Access the coordinates of the point in its frame, homogenous coordinates
+                        double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
+                        /*Eigen::MatrixXd P_parent = Eigen::MatrixXd::Identity(3, 1); //position in parent frame
+                        P_parent(0,0) = point.x;
+                        P_parent(1,0) = point.y;
+                        P_parent(2,0) = point.z;*/
+                        //transform it to have the coordinate in the ref_frame, homogenous coordinates (cost to much time to compute, so we transform the constraints before)
+                        /*Eigen::MatrixXd P_world = Pass_matrix_world_cam*P_parent;
+                        double x = P_world(0,0);
+                        double y = P_world(1,0);
+                        double z = P_world(2,0);*/
 
-                    bool in_bounds = (min_height <= h_world) && (max_height >= h_world) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
-                    bool is_cliff = false;
-                    /*if(cliff_detect){
-                        is_cliff = h_world <= -cliff_height;
-                    }*/
+                        // Process the point here...
+                        double h_world = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
+                        double x_ref = scalar_projection_fast(P_parent,C_r_bar);
+                        double y_ref = scalar_projection_fast(P_parent,C_a_bar);
+                        double angle = atan2(y_ref,x_ref); //angle from ref_frame x axis
+                        int ind_circle = angle_to_index(angle,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values
+                        float dist = sqrt(pow(x_ref+x_cam_offset,2)+pow(y_ref+y_cam_offset,2)); //planar distance from robot center
 
-                    if(in_bounds || is_cliff){
-                        //fill cloud
-                        if(publish_cloud){
-                            filtered_points->push_back(point);
-                        } 
-                        //fill scan
-                        if(publish_scan){
-                            int real_ind = remap_scan_index(ind_circle, 0.0, 2*M_PI, circle_reso, -h_fov/2, h_fov/2, scan_reso); //we want the index for a list that represent values from -h_fov/2 values to h_fov/2 values. because the laserscan message is configured like this
-                            //debug_ss << "\nDEBUG_SPECIAL: " << "angle: "<< angle*180/M_PI << " circle_ind = " << ind_circle << " real_ind = " << real_ind << std::endl;
-                            if(real_ind>0 && real_ind<laser_scan_msg.ranges.size()){
-                                if(dist<laser_scan_msg.ranges[real_ind]){
-                                    laser_scan_msg.ranges[real_ind] = dist;
+                        bool in_bounds = (min_height <= h_world) && (max_height >= h_world) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
+                        bool is_cliff = false;
+                        /*if(cliff_detect){
+                            is_cliff = h_world <= -cliff_height;
+                        }*/
+
+                        if(in_bounds || is_cliff){
+                            //fill cloud
+                            if(publish_cloud){
+                                filtered_points->push_back(point);
+                            } 
+                            //fill scan
+                            if(publish_scan){
+                                int real_ind = remap_scan_index(ind_circle, 0.0, 2*M_PI, circle_reso, -h_fov/2, h_fov/2, scan_reso); //we want the index for a list that represent values from -h_fov/2 values to h_fov/2 values. because the laserscan message is configured like this
+                                //debug_ss << "\nDEBUG_SPECIAL: " << "angle: "<< angle*180/M_PI << " circle_ind = " << ind_circle << " real_ind = " << real_ind << std::endl;
+                                if(real_ind>0 && real_ind<laser_scan_msg.ranges.size()){
+                                    if(dist<laser_scan_msg.ranges[real_ind]){
+                                        laser_scan_msg.ranges[real_ind] = dist;
+                                    }
+                                    added_as_obstacles += 1;
+                                    laser_scan_msg.intensities[real_ind] = 0.0;
                                 }
-                                added_as_obstacles += 1;
-                                laser_scan_msg.intensities[real_ind] = 0.0;
+                                //other cases should never happen as we selected the points that should be in this laser scan already with 'in_bounds', but we add the condition just in case extremities indexes cause problems.
                             }
-                            //other cases should never happen as we selected the points that should be in this laser scan already with 'in_bounds', but we add the condition just in case extremities indexes cause problems.
                         }
-                    }
 
-                    //debug
-                    if(in_bounds){
-                        nb_inbound_points += 1;
-                    }
-                    else if(is_cliff){
-                        nb_cliff_points += 1;
-                    }
-                    else{
-                        nb_thrown_points += 1;
+                        //debug
+                        if(in_bounds){
+                            nb_inbound_points += 1;
+                        }
+                        else if(is_cliff){
+                            nb_cliff_points += 1;
+                        }
+                        else{
+                            nb_thrown_points += 1;
+                        }
                     }
 
                 }
@@ -393,7 +405,8 @@ private:
         this->declare_parameter("h_fov", 1.570796327);
         this->declare_parameter("range_min", 0.0);
         this->declare_parameter("range_max", 5.0);
-        this->declare_parameter("speed_up", 1);
+        this->declare_parameter("speed_up_h", 1);
+        this->declare_parameter("speed_up_v", 1);
         this->declare_parameter("publish_cloud", true);
         this->declare_parameter("topic_out_cloud", "cam1/filtered_cloud");
         this->declare_parameter("publish_scan", true);
@@ -419,7 +432,8 @@ private:
         this->get_parameter("h_fov", h_fov);
         this->get_parameter("range_min", range_min);
         this->get_parameter("range_max", range_max);
-        this->get_parameter("speed_up", speed_up);
+        this->get_parameter("speed_up_h", speed_up_h);
+        this->get_parameter("speed_up_v", speed_up_v);
         this->get_parameter("publish_cloud", publish_cloud);
         this->get_parameter("topic_out_cloud", topic_out_cloud);
         this->get_parameter("publish_scan", publish_scan);
@@ -448,7 +462,8 @@ private:
                 << "\nh_fov: " << h_fov
                 << "\nrange_min: " << range_min
                 << "\nrange_max: " << range_max
-                << "\nspeed_up: " << speed_up
+                << "\nspeed_up_h: " << speed_up_h
+                << "\nspeed_up_v: " << speed_up_v
                 << "\npublish_cloud: " << publish_cloud
                 << "\ntopic_out_cloud: " << topic_out_cloud
                 << "\npublish_scan: " << publish_scan
@@ -510,7 +525,8 @@ private:
     double h_fov;
     double range_min;
     double range_max;
-    int speed_up;
+    int speed_up_h;
+    int speed_up_v;
     bool publish_cloud;
     std::string topic_out_cloud;
     //Scan settings

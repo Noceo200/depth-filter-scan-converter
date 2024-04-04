@@ -4,7 +4,7 @@ depth_filter_scan_converter_node:
     rate: 20.0 #hz, better if equal or inferior to depth sensor publishing speed
 
     #Points cloud filtering settings
-    topic_in: "cam1/depth/points" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
+    topic_in: "cam1/depth/points" #"/cam1/zed_node/point_cloud/cloud_registered" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
     ref_frame: "base_link" #reference frame for points 3D position, should be a frame attached to the robot at the floor level and parralel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with height_offset 
     height_offset: 0.147 #height offset from the floor, distance between the floor and ref_frame. (following z axis in ref_frame, usually >0 as ref_frame above the floor)
     min_height: 0.02 #minimum height of a point to be considered (represent height following z axis ref_frame)
@@ -12,7 +12,8 @@ depth_filter_scan_converter_node:
     h_fov: 1.570796327 #depth sensor horizontale field of view, will crop the values if smaller than real field of view
     range_min: 0.0 #m radius from ref_frame center
     range_max: 5.0 #m radius from ref_frame center
-    speed_up: 1 #int value that allow to skip some points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
+    speed_up_h: 1 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
+    speed_up_v: 1 #int value that allow to skip vertical lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
 
     publish_cloud: true #choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use to check wich points are considered to compute it
     topic_out_cloud: "cam1/filtered_cloud"
