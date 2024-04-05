@@ -4,25 +4,25 @@ depth_filter_scan_converter_node:
     rate: 20.0 #hz, better if equal or inferior to depth sensor publishing speed
 
     #Points cloud filtering settings
-    topic_in: "/cam1/zed_node/point_cloud/cloud_registered" #cam1/depth/points" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
+    topic_in: "cam1/depth/points" #"/cam1/zed_node/point_cloud/cloud_registered" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
     ref_frame: "base_link" #reference frame for points 3D position, should be a frame attached to the robot at the floor level and parralel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with height_offset 
-    height_offset: 0.147 #height offset from the floor, distance between the floor and ref_frame. (following z axis in ref_frame, usually >0 as ref_frame above the floor)
-    min_height: 0.02 #minimum height of a point to be considered (represent height following z axis ref_frame)
-    max_height: 1.0 #maximum height for points (represent height following z axis ref_frame)
-    h_fov: 1.570796327 #depth sensor horizontale field of view, will crop the values if smaller than real field of view
+    height_offset: 0.147 #lidar1_link: 0.21 #base_link: 0.147 #height offset from the floor, distance between the floor and ref_frame. (following z axis in ref_frame, usually >0 as ref_frame above the floor)
+    min_height: 0.02 #minimum height of a point to be considered (represent height following z axis in ref_frame)
+    max_height: 1.0 #maximum height for points (represent height following z axis in ref_frame)
+    angle_min: -0.785398163 #minimum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi]
+    angle_max: 0.785398163 #maximum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi] and > angle_min
     range_min: 0.0 #m radius from ref_frame center
-    range_max: 5.0 #m radius from ref_frame center
-    speed_up_h: 1 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
+    range_max: 10.0 #m radius from ref_frame center
+    speed_up_h: 4 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     speed_up_v: 1 #int value that allow to skip vertical lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
 
-    publish_cloud: true #choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use to check wich points are considered to compute it
+    publish_cloud: true #choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use as debug to check wich points are considered to compute the scan
     topic_out_cloud: "cam1/filtered_cloud"
  
     #Scan settings (based on filtered points above)
     publish_scan: true
-    topic_out_scan: "cam1/scan"
-    out_frame: "base_link" #frame to publish the LaserScan message, put the camera frame or a new one
-    h_angle_increment: 0.017453293 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
+    topic_out_scan: "cam1/scan" #The LaserScan message will be published in the frame 'ref_frame'
+    h_angle_increment: 0.008726647 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
 
     cliff_detect: true #detect and consider holes or cliffs in the floor as obstacles
     cliff_height: -0.02 #height of points that should be considered as holes and therefore as obstacles
@@ -34,4 +34,4 @@ depth_filter_scan_converter_node:
     #debugging
     debug: true #may reduce the execution speed
     debug_file_path: "/home/jrluser/Desktop/ros_workspace/depth_filter_scan_converter_debug.txt"
-    show_ranges: true #Show LaserScan message ranges or not, only when publish_scan is activated
+    show_ranges: false #Show LaserScan message ranges or not, only when publish_scan is activated
