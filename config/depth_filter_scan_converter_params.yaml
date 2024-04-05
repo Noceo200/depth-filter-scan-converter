@@ -12,7 +12,7 @@ depth_filter_scan_converter_node:
     angle_min: -0.785398163 #minimum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi]
     angle_max: 0.785398163 #maximum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi] and > angle_min
     range_min: 0.0 #m radius from ref_frame center
-    range_max: 10.0 #m radius from ref_frame center
+    range_max: 5.0 #m radius from ref_frame center (need to be smaller than maximum range of deph camera, otherwise infnite points of camera might be interpreted as obstacles)
     speed_up_h: 4 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     speed_up_v: 1 #int value that allow to skip vertical lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     #If the list of points is unordered (msg->header.height == 1) then, for the lines skipping, the code will consider that the real cloud is ordered as a square with msg->header.height = msg->header.width = sqrt(msg->header.width)

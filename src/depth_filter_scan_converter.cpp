@@ -177,11 +177,15 @@ private:
 
                         auto point = raw_points->points[i];
 
+                        /*if(i%50000 == 0){
+                            debug_ss << "\nDEBUG_PERSO: point coordinates: (" << point.x << "," << point.y << "," << point.z << ")" << std::endl;
+                        }*/
+
                         // Access the coordinates of the point in its frame, homogenous coordinates
                         double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
 
                         // Process the point here...
-                        double z_ref = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in ref = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
+                        double z_ref = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
                         double x_ref = scalar_projection_fast(P_parent,C_r_bar);
                         double y_ref = scalar_projection_fast(P_parent,C_a_bar);
                         double angle = atan2(y_ref,x_ref); //angle from ref_frame x axis
@@ -193,7 +197,14 @@ private:
                         bool in_bounds = (min_height <= z_ref) && (max_height >= z_ref) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
                         bool is_cliff = false;
                         if(cliff_detect){
-                            is_cliff = z_ref <= cliff_height;
+                            if(z_ref <= cliff_height){ //also work for points at infinite distance
+                                is_cliff = true;
+                                //The obstacle is situated closer than the detected point (especially for point at infinite distance)
+                                //So we recompute the distance
+                                //double angle_v = atan2(z_ref,x_ref); //vertical angle from ref_frame
+                                double new_z = height_offset + height_cam_offset; //height we want to apply for Thales and have the obstacle at this distance
+                                dist = (new_z*dist)/abs(z_ref);
+                            }
                         }
 
                         if(in_bounds || is_cliff){
