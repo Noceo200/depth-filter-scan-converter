@@ -11,6 +11,59 @@
 #include "tf2_ros/buffer.h"
 #include "tools.h"
 
+geometry_msgs::msg::TransformStamped tf_offset(geometry_msgs::msg::TransformStamped &relative_transform, geometry_msgs::msg::TransformStamped tf1, geometry_msgs::msg::TransformStamped tf2){
+    //give transformation from tf1 to tf2
+
+    Eigen::Quaterniond rot_1(tf1.transform.rotation.w,
+                            tf1.transform.rotation.x,
+                            tf1.transform.rotation.y,
+                            tf1.transform.rotation.z);
+
+    Eigen::Quaterniond rot_2(tf2.transform.rotation.w,
+                            tf2.transform.rotation.x,
+                            tf2.transform.rotation.y,
+                            tf2.transform.rotation.z);
+
+    // Perform quaternion subtraction
+    Eigen::Quaterniond relative_rotation = rot_2 * rot_1.inverse();
+
+    // Subtract translation components
+    double off_x = tf2.transform.translation.x - tf1.transform.translation.x;
+    double off_y = tf2.transform.translation.y - tf1.transform.translation.y;
+    double off_z = tf2.transform.translation.z - tf1.transform.translation.z;
+
+    // relative_transform represents the difference between the two original transforms
+    relative_transform.header = tf2.header;
+    relative_transform.transform.rotation.w = relative_rotation.w();
+    relative_transform.transform.rotation.x = relative_rotation.x();
+    relative_transform.transform.rotation.y = relative_rotation.y();
+    relative_transform.transform.rotation.z = relative_rotation.z();
+    relative_transform.transform.translation.x = off_x;
+    relative_transform.transform.translation.y = off_y;
+    relative_transform.transform.translation.z = off_z;
+
+}
+
+
+void shift_cloud_from_tf(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, geometry_msgs::msg::TransformStamped transf){
+    //transf need to be the transformation from new_frame to old_frame
+    std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_new_old = get_4Dmatrix_from_transform(transf);
+    //transform each points
+    for(int i=0; i<cloud->size(); i++){
+        Eigen::MatrixXd Point_old = Eigen::MatrixXd::Identity(4, 1);
+        Point_old(0,0) = cloud->points[i].x;
+        Point_old(1,0) = cloud->points[i].y;
+        Point_old(2,0) = cloud->points[i].z;
+        Point_old(3,0) = 1.0;
+        
+        Eigen::MatrixXd Point_new = std::get<2>(Pass_matrixes_new_old)*Point_old;
+
+        cloud->points[i].x = Point_new(0,0);
+        cloud->points[i].y = Point_new(1,0);
+        cloud->points[i].z = Point_new(2,0);
+    }
+}
+
 void MatProd_fast4_4(double (&M)[4][4],double (&A)[4][4],double (&B)[4][4]){
     for(int i =0; i< 4; i++){
         for(int j =0; j< 4; j++){

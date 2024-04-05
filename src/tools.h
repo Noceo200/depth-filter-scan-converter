@@ -10,6 +10,8 @@
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
 
+geometry_msgs::msg::TransformStamped tf_offset(geometry_msgs::msg::TransformStamped &relative_transform, geometry_msgs::msg::TransformStamped tf1, geometry_msgs::msg::TransformStamped tf2);
+void shift_cloud_from_tf(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, geometry_msgs::msg::TransformStamped transf);
 void MatProd_fast4_4(double (&M)[4][4],double (&A)[4][4],double (&B)[4][4]);
 void MatProd_fast3_3(double (&M)[3][3],double (&A)[3][3],double (&B)[3][3]);
 void MatProd_fast4_Vect(double (&M)[4][1],double (&A)[4][4],double (&B)[4][1]);

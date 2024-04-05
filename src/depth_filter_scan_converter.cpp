@@ -110,17 +110,19 @@ private:
             }
             bool cloud_ready = false;
             bool cloud_ready2 = false;
-            cloud_ready = update_transform(transf_cam_world,msg->header.frame_id,ref_frame); //needed even if we don't publish the clouds
-            cloud_ready2 = update_transform(transf_world_cam,ref_frame,msg->header.frame_id);
+            bool cloud_ready3 = true; //because might not need to have transform for move compensation
+            cloud_ready = update_transform(transf_cam_ref,msg->header.frame_id,ref_frame); //needed even if we don't publish the clouds
+            cloud_ready2 = update_transform(transf_ref_cam,ref_frame,msg->header.frame_id);
+            if(compensate_move){cloud_ready3 = update_transform(transf_cam_world_0,msg->header.frame_id,world_frame);}
 
-            if(cloud_ready && cloud_ready2){
+            if(cloud_ready && cloud_ready2 && cloud_ready3){
 
                 //version with multidimensionnal array in trash below, but slower for initialisaton
 
                 //filter initialisation
                 pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(new pcl::PointCloud<pcl::PointXYZ>);
-                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_cam_world = get_4Dmatrix_from_transform(transf_cam_world); //needed anyway by both feature, here we just get the rotation matrix
-                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_world_cam = get_4Dmatrix_from_transform(transf_world_cam); //needed anyway by both feature, here we just get the rotation matrix
+                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_cam_ref = get_4Dmatrix_from_transform(transf_cam_ref); //needed anyway by both feature, here we just get the rotation matrix
+                std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> Pass_matrixes_ref_cam = get_4Dmatrix_from_transform(transf_ref_cam); //needed anyway by both feature, here we just get the rotation matrix
 
                 //scan initialisation
                 int scan_reso = static_cast<int>(round((angle_max-angle_min)/h_angle_increment));
@@ -135,12 +137,12 @@ private:
                 int added_as_obstacles = 0;
                 int nb_thrown_points = 0;
 
-                double height_cam_offset = std::get<0>(Pass_matrixes_world_cam)(2,3); 
-                double x_cam_offset = std::get<0>(Pass_matrixes_world_cam)(0,3); 
-                double y_cam_offset = std::get<0>(Pass_matrixes_world_cam)(1,3);
+                double height_cam_offset = std::get<0>(Pass_matrixes_ref_cam)(2,3); 
+                double x_cam_offset = std::get<0>(Pass_matrixes_ref_cam)(0,3); 
+                double y_cam_offset = std::get<0>(Pass_matrixes_ref_cam)(1,3);
 
                 //constraints initialisation
-                //wanted constraints vector in world frame
+                //wanted constraints vector in ref frame
                 Eigen::MatrixXd C_h = Eigen::MatrixXd::Identity(4, 1); //direction of height constraint on vector z
                 C_h(0,0) = 0.0;
                 C_h(1,0) = 0.0;
@@ -157,9 +159,9 @@ private:
                 C_a(2,0) = 0.0;
                 C_a(3,0) = 1.0;
                 //equivalent constraint vector in camera frame, we apply just the rotation, we just need directions
-                Eigen::MatrixXd C_h_f = std::get<1>(Pass_matrixes_cam_world)*C_h;
-                Eigen::MatrixXd C_r_f = std::get<1>(Pass_matrixes_cam_world)*C_r;
-                Eigen::MatrixXd C_a_f = std::get<1>(Pass_matrixes_cam_world)*C_a;
+                Eigen::MatrixXd C_h_f = std::get<1>(Pass_matrixes_cam_ref)*C_h;
+                Eigen::MatrixXd C_r_f = std::get<1>(Pass_matrixes_cam_ref)*C_r;
+                Eigen::MatrixXd C_a_f = std::get<1>(Pass_matrixes_cam_ref)*C_a;
                 //3d versions, using multi dimensionnal arrays are faster inside the coming loop
                 double C_h_bar[3] = {C_h_f(0,0),C_h_f(1,0),C_h_f(2,0)};
                 double C_r_bar[3] = {C_r_f(0,0),C_r_f(1,0),C_r_f(2,0)};
@@ -179,7 +181,7 @@ private:
                         double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
 
                         // Process the point here...
-                        double h_world = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
+                        double z_ref = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in ref = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
                         double x_ref = scalar_projection_fast(P_parent,C_r_bar);
                         double y_ref = scalar_projection_fast(P_parent,C_a_bar);
                         double angle = atan2(y_ref,x_ref); //angle from ref_frame x axis
@@ -188,10 +190,10 @@ private:
                         int ind_circle_ref = angle_to_index(angle_ref,circle_reso);
                         float dist = sqrt(pow(x_ref+x_cam_offset,2)+pow(y_ref+y_cam_offset,2)); //planar distance from robot center
 
-                        bool in_bounds = (min_height <= h_world) && (max_height >= h_world) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
+                        bool in_bounds = (min_height <= z_ref) && (max_height >= z_ref) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
                         bool is_cliff = false;
                         if(cliff_detect){
-                            is_cliff = h_world <= cliff_height;
+                            is_cliff = z_ref <= cliff_height;
                         }
 
                         if(in_bounds || is_cliff){
@@ -225,6 +227,18 @@ private:
                         }
                     }
 
+                }
+
+                //move compensation
+                if(compensate_move){
+                    //we get new transformation that might have changed due to computation time
+                    int success = update_transform(transf_cam_world_1,msg->header.frame_id,world_frame);
+                    if(success){
+                        //we shift points cloud
+                        geometry_msgs::msg::TransformStamped tf_off;
+                        tf_offset(tf_off,transf_cam_world_1,transf_cam_world_0); //transformation from transf_cam_world_1 to transf_cam_world_0
+                        shift_cloud_from_tf(filtered_points, tf_off); //shift cloud from transf_cam_world_0 to transf_cam_world_1
+                    }
                 }
 
                 // Convert the filtered point cloud to a ROS message
@@ -398,6 +412,8 @@ private:
         this->declare_parameter("range_max", 5.0);
         this->declare_parameter("speed_up_h", 1);
         this->declare_parameter("speed_up_v", 1);
+        this->declare_parameter("compensate_move", true);
+        this->declare_parameter("world_frame", "map");
         this->declare_parameter("publish_cloud", true);
         this->declare_parameter("topic_out_cloud", "cam1/filtered_cloud");
         this->declare_parameter("publish_scan", true);
@@ -425,6 +441,8 @@ private:
         this->get_parameter("range_max", range_max);
         this->get_parameter("speed_up_h", speed_up_h);
         this->get_parameter("speed_up_v", speed_up_v);
+        this->get_parameter("compensate_move", compensate_move);
+        this->get_parameter("world_frame", world_frame);
         this->get_parameter("publish_cloud", publish_cloud);
         this->get_parameter("topic_out_cloud", topic_out_cloud);
         this->get_parameter("publish_scan", publish_scan);
@@ -455,6 +473,8 @@ private:
                 << "\nrange_max: " << range_max
                 << "\nspeed_up_h: " << speed_up_h
                 << "\nspeed_up_v: " << speed_up_v
+                << "\ncompensate_move: " << compensate_move
+                << "\nworld_frame: " << world_frame
                 << "\npublish_cloud: " << publish_cloud
                 << "\ntopic_out_cloud: " << topic_out_cloud
                 << "\npublish_scan: " << publish_scan
@@ -495,8 +515,10 @@ private:
     
     //data
     sensor_msgs::msg::PointCloud2::SharedPtr raw_msg = nullptr;
-    geometry_msgs::msg::TransformStamped transf_cam_world;
-    geometry_msgs::msg::TransformStamped transf_world_cam;
+    geometry_msgs::msg::TransformStamped transf_cam_ref;
+    geometry_msgs::msg::TransformStamped transf_ref_cam;
+    geometry_msgs::msg::TransformStamped transf_cam_world_0;
+    geometry_msgs::msg::TransformStamped transf_cam_world_1;
     double last_timestamp;
     //subscribers/publishers
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscriber_;
@@ -519,6 +541,8 @@ private:
     double range_max;
     int speed_up_h;
     int speed_up_v;
+    bool compensate_move;
+    std::string world_frame;
     bool publish_cloud;
     std::string topic_out_cloud;
     //Scan settings
@@ -559,8 +583,8 @@ int main(int argc, char *argv[])
 
                 /*//filter initialisation
                 pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(new pcl::PointCloud<pcl::PointXYZ>);
-                double Pass_matrix_cam_world[4][4];
-                get_4Dmatrix_from_transform_fast(Pass_matrix_cam_world,transf_cam_world); //needed anyway by both feature
+                double Pass_matrix_cam_ref[4][4];
+                get_4Dmatrix_from_transform_fast(Pass_matrix_cam_ref,transf_cam_ref); //needed anyway by both feature
 
                 //scan initialisation
                 int scan_reso = static_cast<int>(round(h_fov/h_angle_increment));
@@ -592,9 +616,9 @@ int main(int argc, char *argv[])
                     };  //range constraint on vector x
                 //equivalent constraint vector in camera frame
                 double C_h_f[4][1];
-                MatProd_fast4_Vect(C_h_f,Pass_matrix_cam_world,C_h);
+                MatProd_fast4_Vect(C_h_f,Pass_matrix_cam_ref,C_h);
                 double C_r_f[4][1];
-                MatProd_fast4_Vect(C_r_f,Pass_matrix_cam_world,C_r);
+                MatProd_fast4_Vect(C_r_f,Pass_matrix_cam_ref,C_r);
                 //3d versions
                 double C_h_bar[3] = {C_h_f[0][0],C_h_f[1][0],C_h_f[2][0]};
                 double C_r_bar[3] = {C_r_f[0][0],C_r_f[1][0],C_r_f[2][0]};*/
