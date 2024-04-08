@@ -143,29 +143,29 @@ private:
 
                 //constraints initialisation
                 //wanted constraints vector in ref frame
-                Eigen::MatrixXd C_h = Eigen::MatrixXd::Identity(4, 1); //direction of height constraint on vector z
-                C_h(0,0) = 0.0;
-                C_h(1,0) = 0.0;
-                C_h(2,0) = 1.0;
-                C_h(3,0) = 1.0;
-                Eigen::MatrixXd C_r = Eigen::MatrixXd::Identity(4, 1); //direction of range constraint on vector x
-                C_r(0,0) = 1.0;
-                C_r(1,0) = 0.0;
-                C_r(2,0) = 0.0;
-                C_r(3,0) = 1.0;
-                Eigen::MatrixXd C_a = Eigen::MatrixXd::Identity(4, 1); //need to define y vector to know angle positivity
-                C_a(0,0) = 0.0;
-                C_a(1,0) = 1.0;
-                C_a(2,0) = 0.0;
-                C_a(3,0) = 1.0;
+                Eigen::MatrixXd C_z = Eigen::MatrixXd::Identity(4, 1); //direction of height constraint on vector z
+                C_z(0,0) = 0.0;
+                C_z(1,0) = 0.0;
+                C_z(2,0) = 1.0;
+                C_z(3,0) = 1.0;
+                Eigen::MatrixXd C_x = Eigen::MatrixXd::Identity(4, 1); //direction of range constraint on vector x
+                C_x(0,0) = 1.0;
+                C_x(1,0) = 0.0;
+                C_x(2,0) = 0.0;
+                C_x(3,0) = 1.0;
+                Eigen::MatrixXd C_y = Eigen::MatrixXd::Identity(4, 1); //need to define y vector to know angle positivity
+                C_y(0,0) = 0.0;
+                C_y(1,0) = 1.0;
+                C_y(2,0) = 0.0;
+                C_y(3,0) = 1.0;
                 //equivalent constraint vector in camera frame, we apply just the rotation, we just need directions
-                Eigen::MatrixXd C_h_f = std::get<1>(Pass_matrixes_cam_ref)*C_h;
-                Eigen::MatrixXd C_r_f = std::get<1>(Pass_matrixes_cam_ref)*C_r;
-                Eigen::MatrixXd C_a_f = std::get<1>(Pass_matrixes_cam_ref)*C_a;
+                Eigen::MatrixXd C_z_f = std::get<1>(Pass_matrixes_cam_ref)*C_z;
+                Eigen::MatrixXd C_x_f = std::get<1>(Pass_matrixes_cam_ref)*C_x;
+                Eigen::MatrixXd C_y_f = std::get<1>(Pass_matrixes_cam_ref)*C_y;
                 //3d versions, using multi dimensionnal arrays are faster inside the coming loop
-                double C_h_bar[3] = {C_h_f(0,0),C_h_f(1,0),C_h_f(2,0)};
-                double C_r_bar[3] = {C_r_f(0,0),C_r_f(1,0),C_r_f(2,0)};
-                double C_a_bar[3] = {C_a_f(0,0),C_a_f(1,0),C_a_f(2,0)};
+                double C_z_bar[3] = {C_z_f(0,0),C_z_f(1,0),C_z_f(2,0)};
+                double C_x_bar[3] = {C_x_f(0,0),C_x_f(1,0),C_x_f(2,0)};
+                double C_y_bar[3] = {C_y_f(0,0),C_y_f(1,0),C_y_f(2,0)};
 
                 debug_ss << "\nStarting process for "<< int(nb_points/(speed_up_h*speed_up_v)) << " points (timestamp: "<< std::to_string(TimeToDouble(msg->header.stamp)) <<" s)" << " (node time: " << (this->now()).nanoseconds() << "ns)" << std::endl;
 
@@ -185,27 +185,34 @@ private:
                         double P_parent[3] = {point.x,point.y,point.z}; //faster than using Eigen in the loop
 
                         // Process the point here...
-                        double z_ref = height_offset + scalar_projection_fast(P_parent,C_h_bar) + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
-                        double x_ref = scalar_projection_fast(P_parent,C_r_bar);
-                        double y_ref = scalar_projection_fast(P_parent,C_a_bar);
-                        double angle = atan2(y_ref,x_ref); //angle from ref_frame x axis
-                        int ind_circle = angle_to_index(angle,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values
-                        double angle_ref = atan2(y_ref+y_cam_offset,x_ref+x_cam_offset); //angle in ref frame
-                        int ind_circle_ref = angle_to_index(angle_ref,circle_reso);
-                        float dist = sqrt(pow(x_ref+x_cam_offset,2)+pow(y_ref+y_cam_offset,2)); //planar distance from robot center
+                        double z_cam = scalar_projection_fast(P_parent,C_z_bar); //z coordinate in world orienttion but centered on cam_frame
+                        double z_world = height_offset + z_cam + height_cam_offset; //Height in world = height offset between ref_frame and floor + height of points in camera_frame + height of camera in ref_frame (all following the axis z of ref_frame)
+                        double x_cam = scalar_projection_fast(P_parent,C_x_bar);  //x coordinate in world orienttion but centered on cam_frame
+                        double y_cam = scalar_projection_fast(P_parent,C_y_bar); //y coordinate in world orienttion but centered on cam_frame
+                        double x_ref; //x coordinate in ref_frame, can be changed in case of cliff
+                        double y_ref; //y coordinate in ref_frame, can be changed in case of cliff
 
-                        bool in_bounds = (min_height <= z_ref) && (max_height >= z_ref) && consider_val(ind_circle, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
                         bool is_cliff = false;
-                        if(cliff_detect){
-                            if(z_ref <= cliff_height){ //also work for points at infinite distance
-                                is_cliff = true;
-                                //The obstacle is situated closer than the detected point (especially for point at infinite distance)
-                                //So we recompute the distance
-                                //double angle_v = atan2(z_ref,x_ref); //vertical angle from ref_frame
-                                double new_z = height_offset + height_cam_offset; //height we want to apply for Thales and have the obstacle at this distance
-                                dist = (new_z*dist)/abs(z_ref);
-                            }
+                        if(cliff_detect && z_world <= cliff_height){//also work for points at infinite distance
+                            is_cliff = true;
+                            //The obstacle is situated closer than the detected point (especially for point at infinite distance)
+                            //So we recompute the distance
+                            double new_z = height_offset + height_cam_offset; //height we want to apply for Thales and have the obstacle at this distance
+                            double dist_cam = sqrt(pow(x_cam,2)+pow(y_cam,2));
+                            double new_dist_cam = new_z*dist_cam/abs(z_cam);
+                            double K = new_dist_cam/dist_cam;
+                            x_ref = x_cam_offset+K*x_cam;
+                            y_ref = y_cam_offset+K*y_cam;
                         }
+                        else{
+                            x_ref = x_cam + x_cam_offset;
+                            y_ref = y_cam + y_cam_offset;
+                        }
+
+                        double angle_ref = atan2(y_ref,x_ref); //angle in ref frame
+                        int ind_circle_ref = angle_to_index(angle_ref,circle_reso); //index where it should be in a 360 degree laserscan list of circle_reso values centered on ref_frame
+                        float dist = sqrt(pow(x_ref,2)+pow(y_ref,2)); //planar distance from robot center
+                        bool in_bounds = (min_height <= z_world) && (max_height >= z_world) && consider_val(ind_circle_ref, start_index, end_index) && (range_min <= dist) && (range_max >= dist);
 
                         if(in_bounds || is_cliff){
                             //fill cloud
@@ -218,9 +225,14 @@ private:
                                 if(real_ind>=0 && real_ind<laser_scan_msg.ranges.size()){
                                     if(dist<laser_scan_msg.ranges[real_ind]){
                                         laser_scan_msg.ranges[real_ind] = dist;
+                                        if(!is_cliff){
+                                            laser_scan_msg.intensities[real_ind] = std::max(0.0,(z_world-min_height)/(max_height-min_height)); //proportionnal to height interval selected by user
+                                        }
+                                        else{
+                                            laser_scan_msg.intensities[real_ind] = -1.0;
+                                        }
                                     }
                                     added_as_obstacles += 1;
-                                    laser_scan_msg.intensities[real_ind] = 0.0;
                                 }
                                 //other cases should never happen as we selected the points that should be in this laser scan already with 'in_bounds', but we add the condition just in case extremities indexes cause problems.
                             }

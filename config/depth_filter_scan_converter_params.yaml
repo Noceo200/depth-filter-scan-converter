@@ -13,7 +13,7 @@ depth_filter_scan_converter_node:
     angle_max: 0.785398163 #maximum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi] and > angle_min
     range_min: 0.0 #m radius from ref_frame center
     range_max: 5.0 #m radius from ref_frame center (need to be smaller than maximum range of deph camera, otherwise infnite points of camera might be interpreted as obstacles)
-    speed_up_h: 4 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
+    speed_up_h: 1 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     speed_up_v: 1 #int value that allow to skip vertical lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     #If the list of points is unordered (msg->header.height == 1) then, for the lines skipping, the code will consider that the real cloud is ordered as a square with msg->header.height = msg->header.width = sqrt(msg->header.width)
 
@@ -27,6 +27,7 @@ depth_filter_scan_converter_node:
     publish_scan: true #(OPTIONAL)
     topic_out_scan: "cam1/scan" #The LaserScan message will be published in the frame 'ref_frame'
     h_angle_increment: 0.008726647 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
+    #intensities will vary from 0.0 to 1.0 according to [min_height, max_height], holes will have intensity of -1.0
 
     cliff_detect: true #(OPTIONAL)detect and consider holes or cliffs in the floor as obstacles
     cliff_height: -0.02 #height of points that should be considered as holes and therefore as obstacles
