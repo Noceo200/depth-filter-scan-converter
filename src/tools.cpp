@@ -1,3 +1,7 @@
+/*
+LAST MODIF(DD/MM/YYYY): 01/04/2024
+*/
+
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
@@ -13,7 +17,6 @@
 
 geometry_msgs::msg::TransformStamped tf_offset(geometry_msgs::msg::TransformStamped &relative_transform, geometry_msgs::msg::TransformStamped tf1, geometry_msgs::msg::TransformStamped tf2){
     //give transformation from tf1 to tf2
-
     Eigen::Quaterniond rot_1(tf1.transform.rotation.w,
                             tf1.transform.rotation.x,
                             tf1.transform.rotation.y,
