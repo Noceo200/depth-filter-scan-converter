@@ -523,7 +523,7 @@ private:
         if (debug_file_ss.is_open()){
             debug_file_ss << text;
             debug_file_ss.close();
-            RCLCPP_INFO(this->get_logger(), "%s",text.c_str());
+            //RCLCPP_INFO(this->get_logger(), "%s",text.c_str());
         }
         else{
             RCLCPP_ERROR(this->get_logger(), "Could not open file for debugging: %s",file.c_str());
