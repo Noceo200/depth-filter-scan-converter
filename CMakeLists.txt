@@ -15,6 +15,7 @@ find_package(PCL REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 file(GLOB SOURCES
     src/*.h
@@ -31,6 +32,7 @@ ament_target_dependencies(depth_filter_scan_converter_node
   tf2
   tf2_ros
   tf2_geometry_msgs
+  nav_msgs
 )
 
 target_link_libraries(depth_filter_scan_converter_node

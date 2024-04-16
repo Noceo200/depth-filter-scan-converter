@@ -10,6 +10,7 @@
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
 #include "tools.h"
+#include "nav_msgs/msg/odometry.hpp"
 
 class PointCloudToLaserScanNode : public rclcpp::Node
 {
@@ -49,6 +50,11 @@ public:
             filtered_points_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(topic_out_cloud, default_qos);
         }
 
+        // Initialize subscriber to odometry
+        if(compensate_move){
+            odom_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(odom_topic, sensor_qos, std::bind(&PointCloudToLaserScanNode::odomCallback, this, std::placeholders::_1));
+        }
+
         // Start loop
         if(publish_cloud || publish_scan){
             timer_ = create_wall_timer(std::chrono::milliseconds(int(1000/rate)), std::bind(&PointCloudToLaserScanNode::DepthFilterToScan, this));
@@ -67,6 +73,7 @@ private:
     {
         std::stringstream debug_ss;
 
+        //Update message
         mutex_points_cloud.lock();
         raw_msg = msg;
         mutex_points_cloud.unlock();
@@ -78,6 +85,28 @@ private:
             std::string debug_msg = debug_ss.str();
             write_debug(debug_file_path, debug_msg);
         }
+
+        //Update transformations
+        mutex_transforms.lock();
+        cloud_ready = 0;
+        cloud_ready2 = 0;
+        cloud_ready = update_transform(transf_cam_ref,raw_msg->header.frame_id,ref_frame,raw_msg->header.stamp); //needed even if we don't publish the clouds
+        cloud_ready2 = update_transform(transf_ref_cam,ref_frame,raw_msg->header.frame_id,raw_msg->header.stamp); //same but inverted transformation to avoid to ave to invert matrixes
+        mutex_transforms.unlock();
+
+        //update odometry
+        if(compensate_move){
+            mutex_odom.lock();
+            odom_msg_former = odom_msg_new;
+            mutex_odom.unlock();
+        }
+    }
+
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        //Update odometry
+        mutex_odom.lock();
+        odom_msg_new = msg;
+        mutex_odom.unlock();
     }
 
     void DepthFilterToScan(){
@@ -102,20 +131,18 @@ private:
 
             //common initialisation
             int nb_points = raw_points->points.size();
-            int nb_column = raw_msg->width;
-            int nb_line = raw_msg->height;
+            int nb_column = msg->width;
+            int nb_line = msg->height;
             if(nb_line==1){ //if we have uordered list of points, we consider it as a square cloud
                 nb_column = static_cast<int>(sqrt(nb_column));
                 nb_line = nb_column;
             }
-            bool cloud_ready = false;
-            bool cloud_ready2 = false;
-            bool cloud_ready3 = true; //because might not need to have transform for move compensation
-            cloud_ready = update_transform(transf_cam_ref,msg->header.frame_id,ref_frame); //needed even if we don't publish the clouds
-            cloud_ready2 = update_transform(transf_ref_cam,ref_frame,msg->header.frame_id);
-            if(compensate_move){cloud_ready3 = update_transform(transf_cam_world_0,msg->header.frame_id,world_frame);}
 
-            if(cloud_ready && cloud_ready2 && cloud_ready3){
+            mutex_transforms.lock();
+            bool can_compute = cloud_ready && cloud_ready2;
+            mutex_transforms.unlock();
+
+            if(can_compute){
 
                 //version with multidimensionnal array in trash below, but slower for initialisaton
 
@@ -129,7 +156,7 @@ private:
                 int circle_reso = static_cast<int>(round(scan_reso*(2*M_PI/(angle_max-angle_min))));
                 int start_index = angle_to_index(angle_min, circle_reso); //start index acording to fov on a 360 degree scan with circle_reso values, we take 360 so that we can throw points that are somewhere else on the circle
                 int end_index = angle_to_index(angle_max, circle_reso);
-                sensor_msgs::msg::LaserScan laser_scan_msg = new_clean_scan(); // To convert PointCloud2 to LaserScan
+                sensor_msgs::msg::LaserScan::SharedPtr laser_scan_msg = new_clean_scan(); // To convert PointCloud2 to LaserScan
 
                 //debug initialisation
                 int nb_inbound_points = 0;
@@ -222,14 +249,14 @@ private:
                             //fill scan
                             if(publish_scan){
                                 int real_ind = remap_scan_index(ind_circle_ref, 0.0, 2*M_PI, circle_reso, angle_min, angle_max, scan_reso); //we want the index for a list that represent values from angle_min values to angle_max values. because the laserscan message is configured like this
-                                if(real_ind>=0 && real_ind<laser_scan_msg.ranges.size()){
-                                    if(dist<laser_scan_msg.ranges[real_ind]){
-                                        laser_scan_msg.ranges[real_ind] = dist;
+                                if(real_ind>=0 && real_ind<laser_scan_msg->ranges.size()){
+                                    if(dist<laser_scan_msg->ranges[real_ind]){
+                                        laser_scan_msg->ranges[real_ind] = dist;
                                         if(!is_cliff){
-                                            laser_scan_msg.intensities[real_ind] = std::max(0.0,(z_world-min_height)/(max_height-min_height)); //proportionnal to height interval selected by user
+                                            laser_scan_msg->intensities[real_ind] = std::max(0.0,(z_world-min_height)/(max_height-min_height)); //proportionnal to height interval selected by user
                                         }
                                         else{
-                                            laser_scan_msg.intensities[real_ind] = -1.0;
+                                            laser_scan_msg->intensities[real_ind] = -1.0;
                                         }
                                     }
                                     added_as_obstacles += 1;
@@ -254,30 +281,40 @@ private:
 
                 //move compensation
                 if(compensate_move){
-                    //we get new transformation that might have changed due to computation time
-                    int success = update_transform(transf_cam_world_1,msg->header.frame_id,world_frame);
-                    if(success){
-                        //we shift points cloud
-                        geometry_msgs::msg::TransformStamped tf_off;
-                        tf_offset(tf_off,transf_cam_world_1,transf_cam_world_0); //transformation from transf_cam_world_1 to transf_cam_world_0
-                        shift_cloud_from_tf(filtered_points, tf_off); //shift cloud from transf_cam_world_0 to transf_cam_world_1
+                    mutex_odom.lock();
+                    nav_msgs::msg::Odometry::SharedPtr current_odom = odom_msg_new; //current odom
+                    mutex_odom.unlock();
+                    //we get new position and Heading that might have changed due to computation time
+                    if(odom_msg_former!=nullptr && current_odom!=nullptr){
+                        geometry_msgs::msg::Vector3 euler_heading_former = adapt_angle(quaternion_to_euler3D(odom_msg_former->pose.pose.orientation)); //previous heading
+                        geometry_msgs::msg::Vector3 euler_heading_new = adapt_angle(quaternion_to_euler3D(odom_msg_new->pose.pose.orientation)); //new heading
+                        double off_x = current_odom->pose.pose.position.x - odom_msg_former->pose.pose.position.x;
+                        double off_y = current_odom->pose.pose.position.y - odom_msg_former->pose.pose.position.y;
+                        double off_tetha = sawtooth(euler_heading_new.z - euler_heading_former.z);
+                        debug_ss << "Former Odometry: (x,y,tetha): (" << odom_msg_former->pose.pose.position.x << "," << odom_msg_former->pose.pose.position.y << "," << euler_heading_former.z << ") m, rad (timestamp: " << std::to_string(TimeToDouble(odom_msg_former->header.stamp)) << " s)" << std::endl;
+                        debug_ss << "New Odometry: (x,y,tetha): (" << current_odom->pose.pose.position.x << "," << current_odom->pose.pose.position.y << "," << euler_heading_new.z << ") m, rad (timestamp: " << std::to_string(TimeToDouble(current_odom->header.stamp)) << " s)" << std::endl;
+                        if(off_x != 0.0 || off_y != 0.0 || off_tetha != 0.0 ){
+                            transform_opened_scan(laser_scan_msg, -off_x, -off_y, -off_tetha, debug_ss);
+                            debug_ss << "Scan adjusted. (x,y,tetha) offset: (" << off_x << "," << off_y << "," << off_tetha << ") m, rad " << std::endl;
+                        }
+                        else{
+                            debug_ss << "No need to compensate and adjust the scan, position and heading didn't change during computation time." << std::endl;
+                        }
+                    }
+                    else{
+                        debug_ss << "WARN: Couldn't compensate motion and adjust the scan: No odometry messages received from topic '" << odom_topic << "'" << std::endl;
                     }
                 }
 
                 // Convert the filtered point cloud to a ROS message
                 sensor_msgs::msg::PointCloud2 filtered_msg;
                 pcl::toROSMsg(*filtered_points, filtered_msg);
-                filtered_msg.header = raw_msg->header; // Set the header
+                filtered_msg.header = msg->header; // Set the header
 
                 //put clock
-                if(use_sim_time){ //if use_sim_time = true
-                    laser_scan_msg.header.stamp = simu_timestamp;
-                    filtered_msg.header.stamp = simu_timestamp;
-                }
-                else{
-                    laser_scan_msg.header.stamp = clock->now();
-                    filtered_msg.header.stamp = clock->now();
-                }
+                update_stamp();
+                laser_scan_msg->header.stamp = current_global_stamp;
+                filtered_msg.header.stamp = current_global_stamp;
 
                 //Publish filtered cloud points
                 if(publish_cloud){
@@ -288,12 +325,12 @@ private:
                 int total_vals = 0;
                 if(publish_scan){
                     // Publish the LaserScan message
-                    laser_scan_publisher_->publish(laser_scan_msg);
+                    laser_scan_publisher_->publish(*laser_scan_msg);
                     //debug data
                     if(debug){
-                        total_vals = laser_scan_msg.ranges.size();
+                        total_vals = laser_scan_msg->ranges.size();
                         for(int i=0; i < total_vals; i++){
-                            if(laser_scan_msg.ranges[i] < INFINITY){
+                            if(laser_scan_msg->ranges[i] < INFINITY){
                                 non_zero_vals ++;
                             }
                         }
@@ -326,8 +363,8 @@ private:
                 if(publish_scan){
                     debug_ss << "    |\n    |\n    V"
                             << "\nLaserScan published" << " (node time: " << (this->now()).nanoseconds() << "ns)" 
-                            << "\n  Frame: " <<  laser_scan_msg.header.frame_id
-                            << "\n  Timestamp: " <<  std::to_string(TimeToDouble(laser_scan_msg.header.stamp))
+                            << "\n  Frame: " <<  laser_scan_msg->header.frame_id
+                            << "\n  Timestamp: " <<  std::to_string(TimeToDouble(laser_scan_msg->header.stamp))
                             << "\n  Number of rays: " << total_vals
                             << "\n  Number of hit: " << non_zero_vals
                             << std::endl;
@@ -344,7 +381,7 @@ private:
                 if(debug && show_ranges && publish_scan){
                     debug_ss << "Ranges: ";
                     for(int i=0; i < total_vals; i++){
-                        debug_ss << laser_scan_msg.ranges[i] << " ";
+                        debug_ss << laser_scan_msg->ranges[i] << " ";
                     }
                     debug_ss << std::endl;
                 }
@@ -361,63 +398,82 @@ private:
         }
     }
 
-    sensor_msgs::msg::LaserScan new_clean_scan() {
-        sensor_msgs::msg::LaserScan clean_scan;
-        clean_scan.header.frame_id=ref_frame;
-        clean_scan.angle_min=angle_min;
-        clean_scan.angle_max=angle_max; 
-        clean_scan.angle_increment=h_angle_increment;
-        clean_scan.range_min=range_min; 
-        clean_scan.range_max=range_max;
-        clean_scan.time_increment=time_increment; 
-        clean_scan.scan_time=scan_time; 
+    sensor_msgs::msg::LaserScan::SharedPtr new_clean_scan() {
+        sensor_msgs::msg::LaserScan::SharedPtr clean_scan =  std::make_shared<sensor_msgs::msg::LaserScan>();
+        clean_scan->header.frame_id=ref_frame;
+        clean_scan->angle_min=angle_min;
+        clean_scan->angle_max=angle_max; 
+        clean_scan->angle_increment=h_angle_increment;
+        clean_scan->range_min=range_min; 
+        clean_scan->range_max=range_max;
+        clean_scan->time_increment=time_increment; 
+        clean_scan->scan_time=scan_time; 
 
-        int resolution = static_cast<int>(round((clean_scan.angle_max-clean_scan.angle_min)/h_angle_increment));
+        int resolution = static_cast<int>(round((clean_scan->angle_max-clean_scan->angle_min)/h_angle_increment));
         //init ranges and add inf values according to the resolution
-        clean_scan.ranges = {};
+        clean_scan->ranges = {};
         for (int i = 0; i < resolution; ++i){
-            clean_scan.ranges.push_back(INFINITY);
-            clean_scan.intensities.push_back(0.0);
+            clean_scan->ranges.push_back(INFINITY);
+            clean_scan->intensities.push_back(0.0);
         }
 
         return clean_scan;
     }
 
-    int update_transform(geometry_msgs::msg::TransformStamped &transform, std::string goal_frame, std::string init_frame){
-        //return 0 if fail to intiialise transform goal_frame => init_frame and 1 else, even when fail to update.
+    int update_transform(geometry_msgs::msg::TransformStamped &transform, std::string goal_frame, std::string init_frame, builtin_interfaces::msg::Time ref_time){
+        //return 0 if fail to intiialise transform goal_frame => init_frame and 1 else, even when fail to update. Also if the transformation is older than min_timestamp we return 2 and write a warning.
         std::stringstream debug_ss;
+        std::string debug_msg;
+        int result = 0;
+        rclcpp::Time ref_rcl_time(ref_time.sec, ref_time.nanosec, RCL_ROS_TIME);
         if (transform.header.stamp == rclcpp::Time(0)) { //if not initialized we try to initialize and return an error if fail
             try {
-                transform = tf_buffer_->lookupTransform(goal_frame, init_frame, tf2::TimePointZero);
-                return 1;
+                transform = tf_buffer_->lookupTransform(goal_frame, init_frame, ref_rcl_time);
+                debug_ss  << "Transformation '" << goal_frame << "' --> '" << init_frame << "' Initialized for first time. (timestamp: "<< std::to_string(TimeToDouble(transform.header.stamp)) << " s)" << std::endl;
+                result = 1;
             }
             catch (const std::exception& e) {
                 debug_ss  << "ERROR: Couldn't get an initial transformation '" << goal_frame << "' --> '" << init_frame << "'" << std::endl;
-                std::string debug_msg = debug_ss.str();
+                debug_msg = debug_ss.str();
                 RCLCPP_INFO(this->get_logger(), "%s", debug_msg.c_str()); //we print errores anyway
-                if(debug){
-                    debug_ss << "Error details: " << e.what() << std::endl;
-                    debug_msg = debug_ss.str();
-                    write_debug(debug_file_path, debug_msg);
-                }
-                return 0;
+                debug_ss << "Error details: " << e.what() << std::endl;
+                result = 0;
             }
         } else { //if already initialized, we return sucess anyway but we send warning if we couldn't update
             try {
-                transform = tf_buffer_->lookupTransform(goal_frame, init_frame, tf2::TimePointZero);
+                transform = tf_buffer_->lookupTransform(goal_frame, init_frame, ref_rcl_time);
+                debug_ss  << "Transformation '" << goal_frame << "' --> '" << init_frame << "' Updated. (timestamp: "<< std::to_string(TimeToDouble(transform.header.stamp)) << " s)"<< std::endl;
+                result = 1;
             }
             catch (const std::exception& e) {
-                debug_ss  << "WARN: Couldn't update the transformation '" << goal_frame << "' --> '" << init_frame << "' , using last detected with timestamp: " << std::to_string(TimeToDouble(transform.header.stamp)) << " s" << std::endl;
-                std::string debug_msg = debug_ss.str();
+                debug_ss  << "WARN: Couldn't update the transformation '" << goal_frame << "' --> '" << init_frame << "', trying to get last published one..." << std::endl; 
+                debug_msg = debug_ss.str();
                 RCLCPP_INFO(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
-                if(debug){
-                    debug_ss << "Error details: " << e.what() << std::endl;
-                    debug_msg = debug_ss.str();
-                    write_debug(debug_file_path, debug_msg);
-                }
+                debug_ss << "Error details: " << e.what() << std::endl;
+                result =2;
             }
-            return 1;
         }
+
+        if(result==2 || result==0){
+            try {
+                transform = tf_buffer_->lookupTransform(goal_frame, init_frame, tf2::TimePointZero);
+                debug_ss  << "Last Published transformation '" << goal_frame << "' --> '" << init_frame << "' Got. (timestamp: "<< std::to_string(TimeToDouble(transform.header.stamp)) << " s)"<< std::endl;
+            }
+            catch (const std::exception& e) {
+                debug_ss  << "WARN: Couldn't get last published transformation '" << goal_frame << "' --> '" << init_frame << "', using last updated one with timestamp: " << std::to_string(TimeToDouble(transform.header.stamp)) << " s" << std::endl;
+                debug_msg = debug_ss.str();
+                RCLCPP_INFO(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
+                debug_ss << "Error details: " << e.what() << std::endl;
+            }
+        }
+
+        if(debug){
+            debug_msg = debug_ss.str();
+            write_debug(debug_file_path, debug_msg);
+        }
+
+        return result;
+
     }
 
     void initialize_params(){
@@ -436,7 +492,7 @@ private:
         this->declare_parameter("speed_up_h", 1);
         this->declare_parameter("speed_up_v", 1);
         this->declare_parameter("compensate_move", true);
-        this->declare_parameter("world_frame", "map");
+        this->declare_parameter("odom_topic", "odom");
         this->declare_parameter("publish_cloud", true);
         this->declare_parameter("topic_out_cloud", "cam1/filtered_cloud");
         this->declare_parameter("publish_scan", true);
@@ -465,7 +521,7 @@ private:
         this->get_parameter("speed_up_h", speed_up_h);
         this->get_parameter("speed_up_v", speed_up_v);
         this->get_parameter("compensate_move", compensate_move);
-        this->get_parameter("world_frame", world_frame);
+        this->get_parameter("odom_topic", odom_topic);
         this->get_parameter("publish_cloud", publish_cloud);
         this->get_parameter("topic_out_cloud", topic_out_cloud);
         this->get_parameter("publish_scan", publish_scan);
@@ -497,7 +553,7 @@ private:
                 << "\nspeed_up_h: " << speed_up_h
                 << "\nspeed_up_v: " << speed_up_v
                 << "\ncompensate_move: " << compensate_move
-                << "\nworld_frame: " << world_frame
+                << "\nodom_topic: " << odom_topic
                 << "\npublish_cloud: " << publish_cloud
                 << "\ntopic_out_cloud: " << topic_out_cloud
                 << "\npublish_scan: " << publish_scan
@@ -530,6 +586,15 @@ private:
         }
     }
 
+    void update_stamp(){
+        if(use_sim_time){ //if use_sim_time = true
+            current_global_stamp = simu_timestamp;
+        }
+        else{
+            current_global_stamp = clock->now();
+        }
+    }
+
     void ClockCallback(const rosgraph_msgs::msg::Clock::SharedPtr msg)
     {
         // Update the current timestamp when the clock message is received
@@ -540,11 +605,14 @@ private:
     sensor_msgs::msg::PointCloud2::SharedPtr raw_msg = nullptr;
     geometry_msgs::msg::TransformStamped transf_cam_ref;
     geometry_msgs::msg::TransformStamped transf_ref_cam;
-    geometry_msgs::msg::TransformStamped transf_cam_world_0;
-    geometry_msgs::msg::TransformStamped transf_cam_world_1;
-    double last_timestamp;
+    int cloud_ready; //check if we could initialize or update transf_cam_ref
+    int cloud_ready2; //check if we could initialize or update transf_ref_cam
+    double last_timestamp; //last date of received raw_msg
+    nav_msgs::msg::Odometry::SharedPtr odom_msg_former;
+    nav_msgs::msg::Odometry::SharedPtr odom_msg_new;
     //subscribers/publishers
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscriber_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_; 
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr laser_scan_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr filtered_points_publisher_;
     rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_subscription_;
@@ -565,7 +633,7 @@ private:
     int speed_up_h;
     int speed_up_v;
     bool compensate_move;
-    std::string world_frame;
+    std::string odom_topic;
     bool publish_cloud;
     std::string topic_out_cloud;
     //Scan settings
@@ -584,9 +652,12 @@ private:
     //concurrence
     std::mutex mutex_debug_file;
     std::mutex mutex_points_cloud;
+    std::mutex mutex_transforms;
+    std::mutex mutex_odom;
     //clock
     builtin_interfaces::msg::Time simu_timestamp; //used for simuation
     rclcpp::Clock::SharedPtr clock; //used if not a simulation
+    builtin_interfaces::msg::Time current_global_stamp;
     //transformations listening
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
