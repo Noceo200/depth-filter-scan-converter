@@ -11,6 +11,7 @@
 #include "tf2_ros/buffer.h"
 #include "tools.h"
 #include "nav_msgs/msg/odometry.hpp"
+#include <chrono> //TDM
 
 class PointCloudToLaserScanNode : public rclcpp::Node
 {
@@ -279,10 +280,12 @@ private:
 
                 }
 
+                std::this_thread::sleep_for(std::chrono::seconds(2)); //TDM
+
                 //move compensation
                 if(compensate_move){
                     mutex_odom.lock();
-                    nav_msgs::msg::Odometry::SharedPtr current_odom = odom_msg_new; //current odom
+                    nav_msgs::msg::Odometry::SharedPtr current_odom(new nav_msgs::msg::Odometry(*odom_msg_new)); //current odom
                     mutex_odom.unlock();
                     //we get new position and Heading that might have changed due to computation time
                     if(odom_msg_former!=nullptr && current_odom!=nullptr){
