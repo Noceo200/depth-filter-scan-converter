@@ -11,7 +11,7 @@
 #include "tf2_ros/buffer.h"
 #include "tools.h"
 #include "nav_msgs/msg/odometry.hpp"
-#include <chrono> //TDM
+#include <chrono> //Only for testing to reduce speed of computation
 
 class PointCloudToLaserScanNode : public rclcpp::Node
 {
@@ -280,7 +280,7 @@ private:
 
                 }
 
-                std::this_thread::sleep_for(std::chrono::seconds(2)); //TDM
+                //std::this_thread::sleep_for(std::chrono::seconds(2)); 
 
                 //move compensation
                 if(compensate_move){
@@ -294,11 +294,11 @@ private:
                         double off_x = current_odom->pose.pose.position.x - odom_msg_former->pose.pose.position.x;
                         double off_y = current_odom->pose.pose.position.y - odom_msg_former->pose.pose.position.y;
                         double off_tetha = sawtooth(euler_heading_new.z - euler_heading_former.z);
-                        debug_ss << "Former Odometry: (x,y,tetha): (" << odom_msg_former->pose.pose.position.x << "," << odom_msg_former->pose.pose.position.y << "," << euler_heading_former.z << ") m, rad (timestamp: " << std::to_string(TimeToDouble(odom_msg_former->header.stamp)) << " s)" << std::endl;
-                        debug_ss << "New Odometry: (x,y,tetha): (" << current_odom->pose.pose.position.x << "," << current_odom->pose.pose.position.y << "," << euler_heading_new.z << ") m, rad (timestamp: " << std::to_string(TimeToDouble(current_odom->header.stamp)) << " s)" << std::endl;
-                        if(off_x != 0.0 || off_y != 0.0 || off_tetha != 0.0 ){
+                        debug_ss << "Former Odometry: (x,y,tetha): (" << odom_msg_former->pose.pose.position.x << "," << odom_msg_former->pose.pose.position.y << "," << rads_to_degrees(euler_heading_former.z) << ") m, deg (timestamp: " << std::to_string(TimeToDouble(odom_msg_former->header.stamp)) << " s)" << std::endl;
+                        debug_ss << "New Odometry: (x,y,tetha): (" << current_odom->pose.pose.position.x << "," << current_odom->pose.pose.position.y << "," << rads_to_degrees(euler_heading_new.z) << ") m, deg (timestamp: " << std::to_string(TimeToDouble(current_odom->header.stamp)) << " s)" << std::endl;
+                        if(off_x != 0.0 || off_y != 0.0 || off_tetha != 0.0){
                             transform_opened_scan(laser_scan_msg, -off_x, -off_y, -off_tetha, debug_ss);
-                            debug_ss << "Scan adjusted. (x,y,tetha) offset: (" << off_x << "," << off_y << "," << off_tetha << ") m, rad " << std::endl;
+                            debug_ss << "Scan adjusted. (x,y,tetha) offset: (" << off_x << "," << off_y << "," << rads_to_degrees(off_tetha) << ") m, deg " << std::endl;
                         }
                         else{
                             debug_ss << "No need to compensate and adjust the scan, position and heading didn't change during computation time." << std::endl;
