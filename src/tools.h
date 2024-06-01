@@ -1,5 +1,5 @@
 /*
-LAST MODIF(DD/MM/YYYY): 16/04/2024
+LAST MODIF(DD/MM/YYYY): 01/06/2024
 */
 
 #include "rclcpp/rclcpp.hpp"
@@ -14,6 +14,7 @@ LAST MODIF(DD/MM/YYYY): 16/04/2024
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
 
+bool stringToBool(std::string &str);
 int transform_opened_scan(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan, double off_vect_x,double off_vect_y, double off_tetha, std::stringstream &debug_ss);
 double rads_to_degrees(double rads);
 double degrees_to_rads(double degrees);
@@ -27,6 +28,7 @@ void MatProd_fast4_Vect(double (&M)[4][1],double (&A)[4][4],double (&B)[4][1]);
 void to_identity3_3(double (&mat)[3][3]);
 void to_identity4_4(double (&mat)[4][4]);
 double TimeToDouble(builtin_interfaces::msg::Time& stamp);
+builtin_interfaces::msg::Time DoubleToTime(double& seconds);
 bool consider_val(int current_ind, int start_ind, int end_ind);
 int angle_to_index(double alpha, int resolution);
 int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso);

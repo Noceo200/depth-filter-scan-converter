@@ -1,5 +1,5 @@
 /*
-LAST MODIF(DD/MM/YYYY): 16/04/2024
+LAST MODIF(DD/MM/YYYY): 01/06/2024
 */
 
 #include "rclcpp/rclcpp.hpp"
@@ -14,6 +14,19 @@ LAST MODIF(DD/MM/YYYY): 16/04/2024
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
 #include "tools.h"
+
+bool stringToBool(std::string &str) {
+    // Convert string to lowercase for case-insensitive comparison
+    std::string lowerStr = str;
+    std::transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(), ::tolower);
+
+    // Check for various representations of true and false
+    if (lowerStr == "true" || lowerStr == "yes" || lowerStr == "1") {
+        return true;
+    } else{
+        return false;
+    }
+}
 
 int transform_opened_scan(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan, double off_vect_x,double off_vect_y, double off_tetha, std::stringstream &debug_ss){
     /*
@@ -146,9 +159,11 @@ int filter_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,dou
     for (int i = 0; i < resolution; ++i) { 
         if(i+index_shift < resolution){ 
             shifted_scan->ranges.push_back(to_transform_scan->ranges[i+index_shift]);
+            shifted_scan->intensities.push_back(to_transform_scan->intensities[i+index_shift]);
         }
         else{
             shifted_scan->ranges.push_back(to_transform_scan->ranges[i+index_shift-resolution]);
+            shifted_scan->intensities.push_back(to_transform_scan->intensities[i+index_shift-resolution]);
         }
     }
 
@@ -165,9 +180,11 @@ int filter_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,dou
         float dist = shifted_scan->ranges[i];
         if(consider_val(i, start_index, end_index) && dist<=max_range && dist>=min_range){ //if the value is autorized, we add it
             filtered_scan->ranges.push_back(shifted_scan->ranges[i]);
+            filtered_scan->intensities.push_back(shifted_scan->intensities[i]);
         }
         else{
             filtered_scan->ranges.push_back(INFINITY);
+            filtered_scan->intensities.push_back(0.0);
         }
     }
 
@@ -203,6 +220,7 @@ int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,
     // Transform the LaserScan message
     for (int i = 0; i < resolution; ++i) { //initiate
         transformed_scan->ranges.push_back(INFINITY);
+        transformed_scan->intensities.push_back(0.0);
     }
 
     //let's be sure to manipulate angles from 0 to 2pi
@@ -271,7 +289,11 @@ int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,
             new_val = sqrt(pow(new_x2,2)+pow(new_y2,2));
 
             new_index = angle_to_index(new_angle,resolution);
-            transformed_scan->ranges[new_index] = std::min(static_cast<double>(transformed_scan->ranges[new_index]),new_val); //in case some area are no more accessible from the new origin
+            if(new_val < transformed_scan->ranges[new_index]){
+                transformed_scan->ranges[new_index] = new_val;
+                transformed_scan->intensities[new_index] = to_transform_scan->intensities[ind];
+            }
+            //(FORMER CODE)transformed_scan->ranges[new_index] = std::min(static_cast<double>(transformed_scan->ranges[new_index]),new_val); //depending on resolution several points can try to be at same index, and in case some area are no more accessible from the new origin
             //RCLCPP_INFO(this->get_logger(), "Transform_data: initindex='%d'; initangle='%f'; initval='%f'; initx='%f'; inity='%f'; newx2='%f'; newy2='%f'; newval='%f'; newangle='%f'; newindex='%f'",ind,init_angle,init_val,init_x,init_y,new_x2,new_y2,new_val,new_angle,new_index);
         }
 
@@ -294,6 +316,7 @@ int copy_ranges(sensor_msgs::msg::LaserScan::SharedPtr host_scan, sensor_msgs::m
         int reso = host_scan->ranges.size();
         for (int i = 0; i < reso; ++i) { 
             host_scan->ranges[i] = target_scan->ranges[i];
+            host_scan->intensities[i] = target_scan->intensities[i];
         }
         return 1;
     }
@@ -564,6 +587,13 @@ double TimeToDouble(builtin_interfaces::msg::Time& stamp){
     return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
 }
 
+builtin_interfaces::msg::Time DoubleToTime(double& seconds){
+    builtin_interfaces::msg::Time time_msg;
+    time_msg.sec = static_cast<int32_t>(seconds);
+    time_msg.nanosec = static_cast<uint32_t>((seconds - time_msg.sec) * 1e9);
+    return time_msg;
+}
+
 bool consider_val(int current_ind, int start_ind, int end_ind){
     // return true if current_ind is between start_ind and end_ind according to a circle reference.
     if(start_ind>end_ind){ //if interval pass throught the origin of the circle, we test considering the split into 2 interval
@@ -577,7 +607,7 @@ bool consider_val(int current_ind, int start_ind, int end_ind){
 int angle_to_index(double alpha, int resolution){
     //return index of angle alpha, in a table with 'resolution' values placed from 0 to 360 degree.
     // Normalize the angle to the range [0, 2*M_PI)
-    alpha = std::fmod(alpha, 2 * M_PI);
+    alpha = std::fmod(alpha, 2 * M_PI); //return negative number if alpha is negative initially
     //debug_ss << "\nAngle_to_index: "<< " mod: " << alpha;
     if (alpha < 0) {
         alpha += 2 * M_PI;
@@ -593,28 +623,31 @@ double index_to_angle(int ind, int resolution, double elongation){ //default elo
 }
 
 int remap_scan_index(int prev_ind, double prev_angle_start, double prev_angle_end, double prev_reso, double new_angle_start, double new_angle_end, double new_reso){
-    int new_ind;
+    int new_ind_360;
     /*
-    return the index in a new scan list.
+    return the index in a new scan list. But return it as if the final scan was a 360deg scan, because otherwise some indexes are not possible, so this function needs to be use with consider_val to filter the points you want to keep.
     */
     double prev_elong = prev_angle_end - prev_angle_start;  
     double new_elong = new_angle_end - new_angle_start;
     double prev_angle_incr = prev_elong/prev_reso;
     double new_angle_incr = new_elong/new_reso;
     int reso_360 = static_cast<int>(round(2*M_PI/prev_angle_incr)); //resoluton that would have prev_list if on a 360deg circle list
+    int prev_ind_360 = fmod(prev_ind + angle_to_index(prev_angle_start,reso_360),reso_360); //index that would be prev_ind in a 360 deg scan
 
-   //offset gestion
-    double angle_offset = sawtooth(prev_angle_start-new_angle_start);
-    if(angle_offset<0){
-        angle_offset += 2*M_PI;
+    //offset gestion
+    //the angle offset according to the new scan we have with prev_ind_360 is the start angle of the new scan
+    int ind_offset = angle_to_index(new_angle_start,reso_360); //should return index between [0,reso_360]
+    //new index considering offset in a 360deg scan with reso_360
+    int new_ind_360_temp = fmod(prev_ind_360 - ind_offset,reso_360);
+    if (new_ind_360_temp<0){
+        new_ind_360_temp += reso_360;
     }
-    //should have offset between [0,2Pi]
-    int ind_offset = angle_to_index(angle_offset,reso_360); //should return index between [0,reso_360]
-    new_ind = static_cast<int>(round(fmod(prev_ind + ind_offset,reso_360)));
-    //different reso gestion 
-    new_ind = static_cast<int>(round((prev_angle_incr*new_ind)/new_angle_incr));
-    
-    return new_ind;
+
+    //different reso gestion
+    new_ind_360 = static_cast<int>(round((prev_angle_incr/new_angle_incr)*new_ind_360_temp));
+    //new_ind_360 = angle_to_index(index_to_angle(new_ind_360_temp,reso_360),new_reso);
+
+    return new_ind_360;
 }
 
 double sawtooth(double x) {

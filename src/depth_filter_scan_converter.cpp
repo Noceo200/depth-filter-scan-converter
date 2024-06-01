@@ -250,7 +250,7 @@ private:
                             //fill scan
                             if(publish_scan){
                                 int real_ind = remap_scan_index(ind_circle_ref, 0.0, 2*M_PI, circle_reso, angle_min, angle_max, scan_reso); //we want the index for a list that represent values from angle_min values to angle_max values. because the laserscan message is configured like this
-                                if(real_ind>=0 && real_ind<laser_scan_msg->ranges.size()){
+                                if(consider_val(real_ind,0,scan_reso-1)){
                                     if(dist<laser_scan_msg->ranges[real_ind]){
                                         laser_scan_msg->ranges[real_ind] = dist;
                                         if(!is_cliff){
