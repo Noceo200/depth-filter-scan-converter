@@ -284,6 +284,7 @@ private:
 
                 //move compensation
                 if(compensate_move){
+                    //TDM need to be updated with odometry list method used in scan merger or deleted
                     mutex_odom.lock();
                     nav_msgs::msg::Odometry::SharedPtr current_odom(new nav_msgs::msg::Odometry(*odom_msg_new)); //current odom
                     mutex_odom.unlock();
@@ -316,8 +317,8 @@ private:
 
                 //put clock
                 update_stamp();
-                laser_scan_msg->header.stamp = current_global_stamp;
-                filtered_msg.header.stamp = current_global_stamp;
+                laser_scan_msg->header.stamp = DoubleToTime(last_timestamp); //current_global_stamp;
+                filtered_msg.header.stamp = DoubleToTime(last_timestamp);
 
                 //Publish filtered cloud points
                 if(publish_cloud){

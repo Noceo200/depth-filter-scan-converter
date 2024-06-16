@@ -1,5 +1,5 @@
 /*
-LAST MODIF(DD/MM/YYYY): 03/06/2024
+LAST MODIF(DD/MM/YYYY): 14/06/2024
 */
 
 #include "rclcpp/rclcpp.hpp"
@@ -130,7 +130,7 @@ nav_msgs::msg::Odometry get_estimated_odom(double target_time, std::vector<nav_m
     nav_msgs::msg::Odometry estimated_odom = create_zero_odometry();
     int nb_odoms = odoms_list.size();
 
-    debug_ss << "------------------ODOM detail------------------";
+    if (log) {debug_ss << "------------------ODOM detail------------------";}
 
     if (odoms_list.empty()) {
         if (log) {
@@ -520,17 +520,8 @@ int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,
         //points transformation
         if (!isinf(init_val)){ //if it is infinity, we don't need to compute as the default values in the new scan will be INFINITY
             get_pos(init_x, init_y,init_angle,init_val,0.0,0.0); //position in inital frame, vector: lidar=>point
-            Eigen::MatrixXd X2(4, 1); //pos in sensor frame
-            X2(0,0) = init_x;
-            X2(1,0) = init_y;
-            X2(2,0) = 0.0;
-            X2(3,0) = 1.0;
-            Eigen::MatrixXd X1(4, 1); //pos in newframe
-            X1 = M1_2*X2;
-            //Unpack
-            double new_x2 = X1(0,0);
-            double new_y2 = X1(1,0);
-            new_angle = atan2(new_y2,new_x2);
+            transform_2D_point(new_x, new_y,init_x,init_y,M1_2);
+            new_angle = atan2(new_y,new_x);
             //we want angles from 0 to 2pi
             if (new_angle<0){
                 new_angle=2*M_PI+new_angle;
@@ -541,7 +532,7 @@ int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,
             //RCLCPP_INFO(this->get_logger(), "Transform_data: newangle='%f'",new_angle);
 
             //new norm
-            new_val = sqrt(pow(new_x2,2)+pow(new_y2,2));
+            new_val = sqrt(pow(new_x,2)+pow(new_y,2));
 
             new_index = angle_to_index(new_angle,resolution);
             if(new_val < transformed_scan->ranges[new_index]){
@@ -563,6 +554,19 @@ int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan,
         debug_ss << "ERROR: filter_360_data: " << "Copy ranges failed" << '\n';
         return 0;
     }
+}
+
+void transform_2D_point(double &result_x, double &result_y,double init_x, double init_y, Eigen::MatrixXd &M1_2){
+    Eigen::MatrixXd X2(4, 1); //pos in sensor frame
+    X2(0,0) = init_x;
+    X2(1,0) = init_y;
+    X2(2,0) = 0.0;
+    X2(3,0) = 1.0;
+    Eigen::MatrixXd X1(4, 1); //pos in newframe
+    X1 = M1_2*X2;
+    //Unpack
+    result_x = X1(0,0);
+    result_y = X1(1,0);
 }
 
 int copy_ranges(sensor_msgs::msg::LaserScan::SharedPtr host_scan, sensor_msgs::msg::LaserScan::SharedPtr target_scan){

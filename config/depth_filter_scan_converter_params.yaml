@@ -1,10 +1,10 @@
 depth_filter_scan_converter_node:
   ros__parameters:
     #node settings
-    rate: 20.0 #hz, better if equal or inferior to depth sensor publishing speed
+    rate: 10.0 #hz, better if equal or inferior to depth sensor publishing speed
 
     #Points cloud filtering settings
-    topic_in: "cam1/depth/points" #"/cam1/zed_node/point_cloud/cloud_registered" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
+    topic_in: /cam1/zed_node/point_cloud/cloud_registered #"cam1/depth/points" #"/cam1/zed_node/point_cloud/cloud_registered" #the depth camera can be on a mobile part on the robot, the program will adapt by listening the Tfs cam_depth_frame => ref_frame
     ref_frame: "base_link" #reference frame for points 3D position, should be a frame attached to the robot at the floor level and parralel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with height_offset 
     height_offset: 0.147 #lidar1_link: 0.21 #base_link: 0.147 #height offset from the floor, distance between the floor and ref_frame. (following z axis in ref_frame, usually >0 as ref_frame above the floor)
     min_height: 0.02 #minimum height of a point to be considered (represent height following z axis in ref_frame)
@@ -12,13 +12,13 @@ depth_filter_scan_converter_node:
     angle_min: -0.785398163 #minimum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi]
     angle_max: 0.785398163 #maximum angle of points to keep in ref_frame (not in depth sensor frame) [-pi,pi] and > angle_min
     range_min: 0.0 #m radius from ref_frame center
-    range_max: 5.0 #m radius from ref_frame center (need to be smaller than maximum range of deph camera, otherwise infnite points of camera might be interpreted as obstacles)
+    range_max: 8.0 #m radius from ref_frame center (need to be smaller than maximum range of deph camera, otherwise infnite points of camera might be interpreted as obstacles)
     speed_up_h: 1 #int value that allow to skip horizontal lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     speed_up_v: 1 #int value that allow to skip vertical lines of points and have a better rate, 1 = all the points, 2 = 1/2 of the point, etc...
     #If the list of points is unordered (msg->header.height == 1) then, for the lines skipping, the code will consider that the real cloud is ordered as a square with msg->header.height = msg->header.width = sqrt(msg->header.width)
 
-    compensate_move: false #(NOT WORKING YET, Not useful? Lidar also have this offse appearing in simulation, but not a problem) (OPTIONAL) If moving the robot create temporary offset on the points during the (movement), then the computation time might be not fast enough, and then activate this option can compensate that, but it will slow down the maximum possible rate
-    world_frame: "map" #If compensate_move is true, we need the world_frame to compute how ref_frame moved from world_frame during the computation, and apply then we can apply a correction
+    compensate_move: false # (OPTIONAL) If moving the robot create temporary offset on the points during the (movement), then the computation time might be not fast enough, and then activate this option can compensate that, but it will slow down the maximum possible rate
+    odom_topic: "odom_simu" #If compensate_move is true, we need the world_frame to compute how ref_frame moved from world_frame during the computation, and apply then we can apply a correction
 
     publish_cloud: true #(OPTIONAL)choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use as debug to check wich points are considered to compute the scan
     topic_out_cloud: "cam1/filtered_cloud"
@@ -26,10 +26,10 @@ depth_filter_scan_converter_node:
     #Scan settings (based on filtered points above)
     publish_scan: true #(OPTIONAL)
     topic_out_scan: "cam1/scan" #The LaserScan message will be published in the frame 'ref_frame'
-    h_angle_increment: 0.008726647 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
+    h_angle_increment: 0.004363323 #0.008726647 #0.017453293 rad for 1 degree resolution, horizontale resoltion, a smaller value allow for a scan message with more points (if the cloud allow it)
     #intensities will vary from 0.0 to 1.0 according to [min_height, max_height], holes will have intensity of -1.0
 
-    cliff_detect: true #(OPTIONAL)detect and consider holes or cliffs in the floor as obstacles
+    cliff_detect: false #(OPTIONAL)detect and consider holes or cliffs in the floor as obstacles
     cliff_height: -0.02 #height of points that should be considered as holes and therefore as obstacles
 
     #advanced output scan settings
@@ -37,6 +37,6 @@ depth_filter_scan_converter_node:
     scan_time: 0.0 #s, let 0.0 if unknown
 
     #debugging
-    debug: true #(OPTIONAL) may reduce the execution speed
-    debug_file_path: "/home/jrluser/Desktop/ros_workspace/depth_filter_scan_converter_debug.txt"
+    debug: false #(OPTIONAL) may reduce the execution speed
+    debug_file_path: "/home/jrluser/Desktop/call_m_workspace/depth_filter_scan_converter_debug1.txt"
     show_ranges: false #Show LaserScan message ranges or not, only when publish_scan is activated
