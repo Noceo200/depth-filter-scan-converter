@@ -18,7 +18,7 @@ depth_filter_scan_converter_node:
     #If the list of points is unordered (msg->header.height == 1) then, for the lines skipping, the code will consider that the real cloud is ordered as a square with msg->header.height = msg->header.width = sqrt(msg->header.width)
 
     compensate_move: false # (OPTIONAL) If moving the robot create temporary offset on the points during the (movement), then the computation time might be not fast enough, and then activate this option can compensate that, but it will slow down the maximum possible rate
-    odom_topic: "odom_simu" #If compensate_move is true, we need the world_frame to compute how ref_frame moved from world_frame during the computation, and apply then we can apply a correction
+    odom_topic: "odom" #If compensate_move is true, we need the world_frame to compute how ref_frame moved from world_frame during the computation, and apply then we can apply a correction
 
     publish_cloud: true #(OPTIONAL)choose to pulish or not the points cloud, no need to publish for the LaserScan, but can be use as debug to check wich points are considered to compute the scan
     topic_out_cloud: "cam1/filtered_cloud"
