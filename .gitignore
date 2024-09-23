@@ -1,0 +1,7 @@
+**/build/
+**/.idea/
+**/log/
+**/install/
+**/.vscode/
+**/exports_set_up/
+**/exports_packages/
