@@ -507,7 +507,7 @@ private:
         this->declare_parameter("time_increment", 0.0);
         this->declare_parameter("scan_time", 0.0);
         this->declare_parameter("debug", true);
-        this->declare_parameter("debug_file_path", "/home/jrluser/Desktop/ros_workspace/depth_filter_scan_converter_debug.txt");
+        this->declare_parameter("debug_file_path", "depth_filter_scan_converter_debug.txt");
         this->declare_parameter("show_ranges", true);
     }
 
