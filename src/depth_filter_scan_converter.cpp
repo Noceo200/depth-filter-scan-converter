@@ -452,7 +452,7 @@ private:
             catch (const std::exception& e) {
                 debug_ss  << "WARN: Couldn't update the transformation '" << goal_frame << "' --> '" << init_frame << "', trying to get last published one..." << std::endl; 
                 debug_msg = debug_ss.str();
-                RCLCPP_INFO(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
+                //RCLCPP_WARN(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
                 debug_ss << "Error details: " << e.what() << std::endl;
                 result =2;
             }
@@ -466,7 +466,7 @@ private:
             catch (const std::exception& e) {
                 debug_ss  << "WARN: Couldn't get last published transformation '" << goal_frame << "' --> '" << init_frame << "', using last updated one with timestamp: " << std::to_string(TimeToDouble(transform.header.stamp)) << " s" << std::endl;
                 debug_msg = debug_ss.str();
-                RCLCPP_INFO(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
+                //RCLCPP_WARN(this->get_logger(), "%s", debug_msg.c_str()); //we print the warn anyway
                 debug_ss << "Error details: " << e.what() << std::endl;
             }
         }
